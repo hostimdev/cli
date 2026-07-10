@@ -1,0 +1,10 @@
+# oapi-codegen config for the Hostim public API client.
+# Generates a typed client + models from the live spec at api.hostim.dev.
+# See ../Makefile `generate` target.
+package: api
+output: api/client.gen.go
+generate:
+  models: true
+  client: true
+output-options:
+  skip-prune: true

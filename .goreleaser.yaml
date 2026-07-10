@@ -1,0 +1,43 @@
+version: 2
+
+project_name: hostim
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: hostim
+    main: .
+    binary: hostim
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/hostimdev/cli/internal/cmd.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+# Publishing (Homebrew tap, release notes) is wired but intentionally left for a
+# follow-up: fill in the tap repo + token when we're ready to ship binaries.
+brews:
+  - name: hostim
+    repository:
+      owner: hostimdev
+      name: homebrew-tap
+    homepage: https://hostim.dev
+    description: Command-line interface for the Hostim cloud platform
+    skip_upload: auto
+
+release:
+  draft: true

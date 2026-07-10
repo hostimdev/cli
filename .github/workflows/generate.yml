@@ -1,0 +1,42 @@
+name: generate
+
+# Regenerates api/client.gen.go from the LIVE public spec at api.hostim.dev and
+# fails if the committed client has drifted (hand-edited, or the public API
+# changed). On a schedule it doubles as a live-API contract check.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, catch API drift
+  workflow_dispatch:
+
+jobs:
+  check-generated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install oapi-codegen
+        run: go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+      - name: Regenerate client from live spec
+        run: make generate
+      - name: Fail on drift
+        run: |
+          if ! git diff --exit-code api/client.gen.go; then
+            echo "::error::api/client.gen.go is out of date. Run 'make generate' against api.hostim.dev and commit the result."
+            exit 1
+          fi
+
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go test ./...
+      - run: go vet ./...
