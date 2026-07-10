@@ -96,7 +96,7 @@ func envGetCmd(c *cli) *cobra.Command {
 			if err := s.validate(); err != nil {
 				return err
 			}
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -130,7 +130,7 @@ func envSetCmd(c *cli) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -160,7 +160,7 @@ func envRmCmd(c *cli) *cobra.Command {
 			if err := s.validate(); err != nil {
 				return err
 			}
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -200,7 +200,7 @@ func envPullCmd(c *cli) *cobra.Command {
 			if err := s.validate(); err != nil {
 				return err
 			}
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -249,7 +249,7 @@ func envPushCmd(c *cli) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}

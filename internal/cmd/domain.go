@@ -26,7 +26,7 @@ func domainAddCmd(c *cli) *cobra.Command {
 			if app == "" {
 				return fmt.Errorf("--app is required")
 			}
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -56,7 +56,7 @@ func domainRemoveCmd(c *cli) *cobra.Command {
 			if app == "" {
 				return fmt.Errorf("--app is required")
 			}
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}

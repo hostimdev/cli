@@ -33,7 +33,7 @@ func appsListCmd(c *cli) *cobra.Command {
 		Short:   "List apps in the current project",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cl, project, err := c.clientAndProject()
+			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -70,7 +70,7 @@ func appsGetCmd(c *cli) *cobra.Command {
 		Short: "Show an app",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, project, err := c.clientAndProject()
+			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -107,7 +107,7 @@ func appsRemoveCmd(c *cli) *cobra.Command {
 		Short:   "Delete an app",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, project, err := c.clientAndProject()
+			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -130,7 +130,7 @@ func appsRebuildCmd(c *cli) *cobra.Command {
 		Short: "Trigger a rebuild of an app",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, project, err := c.clientAndProject()
+			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -153,7 +153,7 @@ func appsRestartCmd(c *cli) *cobra.Command {
 		Short: "Restart an app",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, project, err := c.clientAndProject()
+			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}

@@ -170,7 +170,7 @@ func simpleList(c *cli, use, short string, fn func(*cobra.Command, *api.ClientWi
 		Short:   short,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -189,7 +189,7 @@ func kvGet(c *cli, use, short string, fn func(*cobra.Command, *api.ClientWithRes
 		Short: short,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -212,7 +212,7 @@ func dbCreate(c *cli, engine string, fn func(*cobra.Command, *api.ClientWithResp
 			if plan == "" {
 				return fmt.Errorf("--plan is required")
 			}
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -238,7 +238,7 @@ func dbRemove(c *cli, engine string, fn func(*cobra.Command, *api.ClientWithResp
 		Short:   "Delete a " + engine + " database",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}

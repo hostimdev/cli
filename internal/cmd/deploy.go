@@ -69,7 +69,7 @@ func newDeployCmd(c *cli) *cobra.Command {
 }
 
 func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error {
-	a, project, err := c.clientAndProject()
+	a, project, err := c.clientAndProject(cmd.Context())
 	if err != nil {
 		return err
 	}

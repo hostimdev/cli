@@ -15,7 +15,7 @@ func newStatusCmd(c *cli) *cobra.Command {
 			"Without one, show a one-glance health table for every app in the project.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, project, err := c.clientAndProject()
+			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}

@@ -69,7 +69,11 @@ func projectsGetCmd(c *cli) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := cl.GetProjectWithResponse(cmd.Context(), args[0])
+			id, err := resolveProjectID(cmd.Context(), cl, args[0])
+			if err != nil {
+				return err
+			}
+			resp, err := cl.GetProjectWithResponse(cmd.Context(), id)
 			if err != nil {
 				return err
 			}
@@ -135,7 +139,11 @@ func projectsRemoveCmd(c *cli) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := cl.DeleteProjectWithResponse(cmd.Context(), args[0])
+			id, err := resolveProjectID(cmd.Context(), cl, args[0])
+			if err != nil {
+				return err
+			}
+			resp, err := cl.DeleteProjectWithResponse(cmd.Context(), id)
 			if err != nil {
 				return err
 			}

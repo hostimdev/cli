@@ -30,7 +30,7 @@ func volumesListCmd(c *cli) *cobra.Command {
 		Short:   "List volumes in the current project",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cl, project, err := c.clientAndProject()
+			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -60,7 +60,7 @@ func volumesGetCmd(c *cli) *cobra.Command {
 		Short: "Show a volume",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, project, err := c.clientAndProject()
+			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -95,7 +95,7 @@ func volumesCreateCmd(c *cli) *cobra.Command {
 			if plan == "" {
 				return fmt.Errorf("--plan is required")
 			}
-			cl, project, err := c.clientAndProject()
+			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -123,7 +123,7 @@ func volumesRemoveCmd(c *cli) *cobra.Command {
 		Short:   "Delete a volume",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, project, err := c.clientAndProject()
+			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}

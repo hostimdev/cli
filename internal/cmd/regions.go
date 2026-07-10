@@ -109,7 +109,7 @@ func regionsPricingCmd(c *cli) *cobra.Command {
 				rows := make([][]string, 0, len(plans))
 				for _, p := range plans {
 					rows = append(rows, []string{
-						p.Name, strconv.Itoa(p.Cores), strconv.Itoa(p.Ram) + "MB",
+						p.Name, strconv.Itoa(p.Cores), strconv.Itoa(p.Ram) + "GB",
 						"€" + strconv.FormatFloat(float64(p.Price), 'f', 2, 32),
 						strconv.FormatBool(p.Available),
 					})
