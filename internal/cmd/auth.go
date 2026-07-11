@@ -126,14 +126,28 @@ func newWhoamiCmd(c *cli) *cobra.Command {
 }
 
 func newUseCmd(_ *cli) *cobra.Command {
-	return &cobra.Command{
-		Use:   "use <project>",
+	var clear bool
+	cmd := &cobra.Command{
+		Use:   "use [project]",
 		Short: "Set the default project for resource commands",
-		Args:  cobra.ExactArgs(1),
+		Long: "Set the default project used by resource commands when no -p/--project\n" +
+			"flag or HOSTIM_PROJECT env var is given. Pass --clear to unset it.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if clear == (len(args) == 1) {
+				return fmt.Errorf("provide a project name or --clear, not both or neither")
+			}
 			f, err := config.Load()
 			if err != nil {
 				return err
+			}
+			if clear {
+				f.CurrentProject = ""
+				if err := config.Save(f); err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "Cleared the default project.")
+				return nil
 			}
 			f.CurrentProject = args[0]
 			if err := config.Save(f); err != nil {
@@ -143,4 +157,6 @@ func newUseCmd(_ *cli) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&clear, "clear", false, "unset the default project")
+	return cmd
 }
