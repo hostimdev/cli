@@ -79,9 +79,67 @@ func templatesShowCmd(c *cli) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return c.printer.Render(t, []string{"FIELD", "VALUE"}, kvRows(t))
+			return c.printer.Render(t, []string{"FIELD", "VALUE"}, templateRows(t))
 		},
 	}
+}
+
+var htmlTagRe = regexp.MustCompile(`<[^>]+>`)
+
+// templateRows renders a template as readable FIELD/VALUE rows: metadata first,
+// then one row per resource. The full structure is still available via -o json.
+func templateRows(t *api.Template) [][]string {
+	rows := [][]string{
+		{"Name", t.Name},
+		{"ID", t.Id},
+		{"Category", dash(str(t.Category))},
+		{"Description", t.Description},
+		{"Source", dash(str(t.SourceUrl))},
+	}
+	for _, v := range t.Components.Volumes {
+		rows = append(rows, []string{"volume", fmt.Sprintf("%s (plan %s)", v.Name, v.Plan)})
+	}
+	for _, d := range t.Components.Postgres {
+		rows = append(rows, []string{"postgres", fmt.Sprintf("%s (plan %s)", d.Name, d.Plan)})
+	}
+	for _, d := range t.Components.Mysql {
+		rows = append(rows, []string{"mysql", fmt.Sprintf("%s (plan %s)", d.Name, d.Plan)})
+	}
+	for _, d := range t.Components.Redis {
+		rows = append(rows, []string{"redis", fmt.Sprintf("%s (plan %s)", d.Name, d.Plan)})
+	}
+	for i := range t.Components.Apps {
+		app := t.Components.Apps[i]
+		rows = append(rows, []string{"app", fmt.Sprintf("%s (%s, plan %s%s)", app.Name, describeSource(&app), app.Plan, portSuffix(app.HttpPort))})
+	}
+	if t.Notes != nil {
+		for _, n := range *t.Notes {
+			if clean := strings.TrimSpace(htmlTagRe.ReplaceAllString(n, "")); clean != "" {
+				rows = append(rows, []string{"note", clean})
+			}
+		}
+	}
+	return rows
+}
+
+// describeSource summarizes an app's deployment source, e.g. "docker nginx" or
+// "git github.com/x/y".
+func describeSource(app *api.App) string {
+	ds := app.DeploymentSource
+	if ds.Type == api.Git && ds.Git != nil {
+		return "git " + ds.Git.Url
+	}
+	if ds.Type == api.Docker && ds.Docker != nil {
+		return "docker " + ds.Docker.Image
+	}
+	return string(ds.Type)
+}
+
+func portSuffix(p *int) string {
+	if p == nil {
+		return ""
+	}
+	return fmt.Sprintf(", port %d", *p)
 }
 
 // ---- apply ----

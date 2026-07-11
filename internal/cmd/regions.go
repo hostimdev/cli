@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/hostimdev/cli/api"
@@ -106,18 +107,54 @@ func regionsPricingCmd(c *cli) *cobra.Command {
 				if resp.JSON200 != nil {
 					plans = *resp.JSON200
 				}
+				sort.SliceStable(plans, func(i, j int) bool { return plans[i].Price < plans[j].Price })
 				rows := make([][]string, 0, len(plans))
 				for _, p := range plans {
 					rows = append(rows, []string{
 						p.Name, strconv.Itoa(p.Cores), strconv.Itoa(p.Ram) + "GB",
-						"€" + strconv.FormatFloat(float64(p.Price), 'f', 2, 32),
-						strconv.FormatBool(p.Available),
+						eur(p.Price), strconv.FormatBool(p.Available),
 					})
 				}
 				return c.printer.Render(plans,
 					[]string{"PLAN", "CORES", "RAM", "PRICE", "AVAILABLE"}, rows)
-			case "mysql", "postgres", "redis", "volume":
-				return pricingGeneric(cmd, c, cl, region, kind)
+			case "mysql", "postgres":
+				return pricingDB(cmd, c, cl, region, kind)
+			case "redis":
+				resp, err := cl.GetRegionRedisPricingWithResponse(cmd.Context(), region)
+				if err != nil {
+					return err
+				}
+				if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
+					return err
+				}
+				var plans []api.RedisPricing
+				if resp.JSON200 != nil {
+					plans = *resp.JSON200
+				}
+				sort.SliceStable(plans, func(i, j int) bool { return plans[i].Price < plans[j].Price })
+				rows := make([][]string, 0, len(plans))
+				for _, p := range plans {
+					rows = append(rows, []string{p.Name, dash(p.Storage), eur(p.Price), strconv.FormatBool(p.Available)})
+				}
+				return c.printer.Render(plans, []string{"PLAN", "STORAGE", "PRICE", "AVAILABLE"}, rows)
+			case "volume":
+				resp, err := cl.GetRegionVolumePricingWithResponse(cmd.Context(), region)
+				if err != nil {
+					return err
+				}
+				if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
+					return err
+				}
+				var plans []api.VolumePricing
+				if resp.JSON200 != nil {
+					plans = *resp.JSON200
+				}
+				sort.SliceStable(plans, func(i, j int) bool { return plans[i].Price < plans[j].Price })
+				rows := make([][]string, 0, len(plans))
+				for _, p := range plans {
+					rows = append(rows, []string{p.Name, storageGB(p.StorageMB), eur(p.Price), strconv.FormatBool(p.Available)})
+				}
+				return c.printer.Render(plans, []string{"PLAN", "STORAGE", "PRICE", "AVAILABLE"}, rows)
 			default:
 				return fmt.Errorf("invalid --for %q (want apps, mysql, postgres, redis or volume)", kind)
 			}
@@ -127,40 +164,90 @@ func regionsPricingCmd(c *cli) *cobra.Command {
 	return cmd
 }
 
-// pricingGeneric renders DB/volume pricing generically as JSON-or-raw, since the
-// tables differ per resource; the JSON output is the machine-readable path.
-func pricingGeneric(cmd *cobra.Command, c *cli, a *api.ClientWithResponses, region, kind string) error {
-	var body []byte
-	var status int
+// pricingDB renders MySQL/Postgres pricing (same shape) as a sorted table.
+func pricingDB(cmd *cobra.Command, c *cli, a *api.ClientWithResponses, region, kind string) error {
+	// Both endpoints return the same field set; normalize into a common row type.
+	type dbPlan struct {
+		Name      string
+		Cores     *int
+		Ram       *int
+		StorageMB int
+		Price     float32
+		Available bool
+	}
+	var plans []dbPlan
 	var payload any
-	switch kind {
-	case "mysql":
+	if kind == "mysql" {
 		resp, err := a.GetRegionMySQLPricingWithResponse(cmd.Context(), region)
 		if err != nil {
 			return err
 		}
-		status, body, payload = resp.StatusCode(), resp.Body, resp.JSON200
-	case "postgres":
+		if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
+			return err
+		}
+		payload = resp.JSON200
+		if resp.JSON200 != nil {
+			p := *resp.JSON200
+			sort.SliceStable(p, func(i, j int) bool { return p[i].Price < p[j].Price })
+			for _, x := range p {
+				plans = append(plans, dbPlan{x.Name, x.Cores, x.Ram, x.StorageMB, x.Price, x.Available})
+			}
+		}
+	} else {
 		resp, err := a.GetRegionPostgresPricingWithResponse(cmd.Context(), region)
 		if err != nil {
 			return err
 		}
-		status, body, payload = resp.StatusCode(), resp.Body, resp.JSON200
-	case "redis":
-		resp, err := a.GetRegionRedisPricingWithResponse(cmd.Context(), region)
-		if err != nil {
+		if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 			return err
 		}
-		status, body, payload = resp.StatusCode(), resp.Body, resp.JSON200
-	case "volume":
-		resp, err := a.GetRegionVolumePricingWithResponse(cmd.Context(), region)
-		if err != nil {
-			return err
+		payload = resp.JSON200
+		if resp.JSON200 != nil {
+			p := *resp.JSON200
+			sort.SliceStable(p, func(i, j int) bool { return p[i].Price < p[j].Price })
+			for _, x := range p {
+				plans = append(plans, dbPlan{x.Name, x.Cores, x.Ram, x.StorageMB, x.Price, x.Available})
+			}
 		}
-		status, body, payload = resp.StatusCode(), resp.Body, resp.JSON200
 	}
-	if err := checkResp(status, body); err != nil {
-		return err
+	rows := make([][]string, 0, len(plans))
+	for _, p := range plans {
+		rows = append(rows, []string{
+			p.Name, intp(p.Cores), ramGB(p.Ram), storageGB(p.StorageMB),
+			eur(p.Price), strconv.FormatBool(p.Available),
+		})
 	}
-	return c.printer.JSON(payload)
+	return c.printer.Render(payload, []string{"PLAN", "CORES", "RAM", "STORAGE", "PRICE", "AVAILABLE"}, rows)
+}
+
+// eur formats a price in euros with two decimals.
+func eur(p float32) string {
+	return "€" + strconv.FormatFloat(float64(p), 'f', 2, 32)
+}
+
+// storageGB renders a size in MB as GB, dropping a trailing ".0".
+func storageGB(mb int) string {
+	if mb <= 0 {
+		return "-"
+	}
+	if mb%1024 == 0 {
+		return strconv.Itoa(mb/1024) + "GB"
+	}
+	return strconv.FormatFloat(float64(mb)/1024, 'f', 1, 64) + "GB"
+}
+
+// ramGB renders an optional RAM value (already in GB) as "<n>GB" or "-".
+func ramGB(p *int) string {
+	if p == nil {
+		return "-"
+	}
+	return strconv.Itoa(*p) + "GB"
+}
+
+// intp renders an optional int as its value or "-".
+func intp(p *int) string {
+	if p == nil {
+		return "-"
+	}
+	return strconv.Itoa(*p)
 }
