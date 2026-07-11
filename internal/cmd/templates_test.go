@@ -129,6 +129,41 @@ components:
 	}
 }
 
+func TestFindConflicts(t *testing.T) {
+	tmpl := &api.Template{}
+	tmpl.Components.Apps = []api.App{{Name: "web"}, {Name: "worker"}}
+	tmpl.Components.Postgres = []api.Postgres{{Name: "db"}}
+	tmpl.Components.Volumes = []api.Volume{{Name: "data"}}
+
+	// Nothing exists yet -> no conflicts.
+	empty := &existingResources{
+		apps: map[string]bool{}, postgres: map[string]bool{}, mysql: map[string]bool{},
+		redis: map[string]bool{}, volumes: map[string]bool{},
+	}
+	if got := findConflicts(tmpl, empty); len(got) != 0 {
+		t.Errorf("expected no conflicts, got %v", got)
+	}
+
+	// Some overlap -> reported in creation order (volume, postgres, then apps).
+	e := &existingResources{
+		apps:     map[string]bool{"web": true},
+		postgres: map[string]bool{"db": true},
+		mysql:    map[string]bool{},
+		redis:    map[string]bool{},
+		volumes:  map[string]bool{"data": true},
+	}
+	got := findConflicts(tmpl, e)
+	want := []string{"volume data", "postgres db", "app web"}
+	if len(got) != len(want) {
+		t.Fatalf("conflicts = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("conflict[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestSummarize(t *testing.T) {
 	tmpl := &api.Template{}
 	tmpl.Components.Apps = []api.App{{Name: "a"}}

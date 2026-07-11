@@ -152,6 +152,8 @@ type applyFlags struct {
 	newProject string
 	region     string
 
+	skipExisting bool
+
 	wait     bool
 	timeout  time.Duration
 	interval time.Duration
@@ -169,7 +171,10 @@ func templatesApplyCmd(c *cli) *cobra.Command {
 			"  -f <file>            a local template YAML file\n" +
 			"  --compose <file>     a docker-compose file, converted to a template via the API\n\n" +
 			"The resources land in the resolved project (-p / current project) unless\n" +
-			"--new-project is given, which creates a fresh project first.",
+			"--new-project is given, which creates a fresh project first.\n\n" +
+			"If any resource already exists in the target project, apply aborts before\n" +
+			"creating anything (so it never overwrites a scaled or configured resource).\n" +
+			"Pass --skip-existing to create only the resources that are missing.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runApply(cmd, c, f)
@@ -181,6 +186,7 @@ func templatesApplyCmd(c *cli) *cobra.Command {
 	fl.StringVar(&f.compose, "compose", "", "docker-compose file to convert and deploy")
 	fl.StringVar(&f.newProject, "new-project", "", "create a new project with this name before deploying")
 	fl.StringVar(&f.region, "region", "", "region for --new-project")
+	fl.BoolVar(&f.skipExisting, "skip-existing", false, "skip resources that already exist instead of aborting")
 	fl.BoolVar(&f.wait, "wait", true, "wait for each resource to become ready")
 	fl.DurationVar(&f.timeout, "timeout", 15*time.Minute, "max time to wait per resource")
 	fl.DurationVar(&f.interval, "poll-interval", 3*time.Second, "status poll interval")
@@ -227,7 +233,127 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 		return err
 	}
 
-	return applyTemplate(ctx, out, a, project, tmpl, f.wait, f.timeout, f.interval)
+	return applyTemplate(ctx, out, a, project, tmpl, f.skipExisting, f.wait, f.timeout, f.interval)
+}
+
+// existingResources holds the names of resources already present in a project,
+// keyed by kind, for the pre-apply conflict check.
+type existingResources struct {
+	apps     map[string]bool
+	postgres map[string]bool
+	mysql    map[string]bool
+	redis    map[string]bool
+	volumes  map[string]bool
+}
+
+// findConflicts returns the "kind name" of every template resource that already
+// exists in the project, in creation order.
+func findConflicts(tmpl *api.Template, e *existingResources) []string {
+	var conflicts []string
+	for _, v := range tmpl.Components.Volumes {
+		if e.volumes[v.Name] {
+			conflicts = append(conflicts, "volume "+v.Name)
+		}
+	}
+	for _, d := range tmpl.Components.Postgres {
+		if e.postgres[d.Name] {
+			conflicts = append(conflicts, "postgres "+d.Name)
+		}
+	}
+	for _, d := range tmpl.Components.Mysql {
+		if e.mysql[d.Name] {
+			conflicts = append(conflicts, "mysql "+d.Name)
+		}
+	}
+	for _, d := range tmpl.Components.Redis {
+		if e.redis[d.Name] {
+			conflicts = append(conflicts, "redis "+d.Name)
+		}
+	}
+	for _, app := range tmpl.Components.Apps {
+		if e.apps[app.Name] {
+			conflicts = append(conflicts, "app "+app.Name)
+		}
+	}
+	return conflicts
+}
+
+// fetchExisting lists the resources already in the project so apply can detect
+// name collisions before creating anything.
+func fetchExisting(ctx context.Context, a *api.ClientWithResponses, project string) (*existingResources, error) {
+	e := &existingResources{
+		apps:     map[string]bool{},
+		postgres: map[string]bool{},
+		mysql:    map[string]bool{},
+		redis:    map[string]bool{},
+		volumes:  map[string]bool{},
+	}
+
+	apps, err := a.GetAppsWithResponse(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResp(apps.StatusCode(), apps.Body); err != nil {
+		return nil, err
+	}
+	if apps.JSON200 != nil {
+		for _, x := range *apps.JSON200 {
+			e.apps[x.Name] = true
+		}
+	}
+
+	pg, err := a.GetPostgresWithResponse(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResp(pg.StatusCode(), pg.Body); err != nil {
+		return nil, err
+	}
+	if pg.JSON200 != nil {
+		for _, x := range *pg.JSON200 {
+			e.postgres[x.Name] = true
+		}
+	}
+
+	my, err := a.GetMysqlsWithResponse(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResp(my.StatusCode(), my.Body); err != nil {
+		return nil, err
+	}
+	if my.JSON200 != nil {
+		for _, x := range *my.JSON200 {
+			e.mysql[x.Name] = true
+		}
+	}
+
+	rd, err := a.GetRedisesWithResponse(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResp(rd.StatusCode(), rd.Body); err != nil {
+		return nil, err
+	}
+	if rd.JSON200 != nil {
+		for _, x := range *rd.JSON200 {
+			e.redis[x.Name] = true
+		}
+	}
+
+	vol, err := a.GetVolumesWithResponse(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResp(vol.StatusCode(), vol.Body); err != nil {
+		return nil, err
+	}
+	if vol.JSON200 != nil {
+		for _, x := range *vol.JSON200 {
+			e.volumes[x.Name] = true
+		}
+	}
+	return e, nil
 }
 
 // resolveApplyProject creates a new project when --new-project is set, otherwise
@@ -278,7 +404,7 @@ func resolveApplyProject(ctx context.Context, out io.Writer, c *cli, a *api.Clie
 
 // applyTemplate creates every resource in the template, in dependency order
 // (volumes, postgres, mysql, redis, then apps), waiting for each to be ready.
-func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponses, project string, tmpl *api.Template, wait bool, timeout, interval time.Duration) error {
+func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponses, project string, tmpl *api.Template, skipExisting, wait bool, timeout, interval time.Duration) error {
 	comps := tmpl.Components
 
 	// The dashboard replaces GENERATE_ME_<n> env values with a random secret
@@ -294,7 +420,25 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 		return err
 	}
 
+	// Pre-flight: never overwrite resources that already exist. Abort before
+	// creating anything unless the caller opted into skipping them.
+	existing, err := fetchExisting(ctx, a, project)
+	if err != nil {
+		return err
+	}
+	conflicts := findConflicts(tmpl, existing)
+	if len(conflicts) > 0 && !skipExisting {
+		return fmt.Errorf("these resources already exist in %s: %s\n"+
+			"apply will not overwrite them. Re-run with --skip-existing to create only the\n"+
+			"missing resources, or --new-project to deploy into a fresh project",
+			project, strings.Join(conflicts, ", "))
+	}
+
 	for _, v := range comps.Volumes {
+		if skipExisting && existing.volumes[v.Name] {
+			fmt.Fprintf(out, "volume %q ... exists, skipping\n", v.Name)
+			continue
+		}
 		fmt.Fprintf(out, "volume %q ... ", v.Name)
 		resp, err := a.CreateVolumeWithResponse(ctx, project, v)
 		if err != nil {
@@ -309,6 +453,10 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 	}
 
 	for _, db := range comps.Postgres {
+		if skipExisting && existing.postgres[db.Name] {
+			fmt.Fprintf(out, "postgres %q ... exists, skipping\n", db.Name)
+			continue
+		}
 		fmt.Fprintf(out, "postgres %q ... ", db.Name)
 		resp, err := a.CreatePostgresWithResponse(ctx, project, db)
 		if err != nil {
@@ -340,6 +488,10 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 	}
 
 	for _, db := range comps.Mysql {
+		if skipExisting && existing.mysql[db.Name] {
+			fmt.Fprintf(out, "mysql %q ... exists, skipping\n", db.Name)
+			continue
+		}
 		fmt.Fprintf(out, "mysql %q ... ", db.Name)
 		resp, err := a.CreateMysqlWithResponse(ctx, project, db)
 		if err != nil {
@@ -371,6 +523,10 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 	}
 
 	for _, db := range comps.Redis {
+		if skipExisting && existing.redis[db.Name] {
+			fmt.Fprintf(out, "redis %q ... exists, skipping\n", db.Name)
+			continue
+		}
 		fmt.Fprintf(out, "redis %q ... ", db.Name)
 		resp, err := a.CreateRedisWithResponse(ctx, project, db)
 		if err != nil {
@@ -403,6 +559,10 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 
 	for _, app := range comps.Apps {
 		app := app
+		if skipExisting && existing.apps[app.Name] {
+			fmt.Fprintf(out, "app %q ... exists, skipping\n", app.Name)
+			continue
+		}
 		normalizeApp(&app)
 		if app.Replicas < 1 {
 			app.Replicas = 1
