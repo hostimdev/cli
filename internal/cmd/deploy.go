@@ -83,13 +83,22 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 	}
 	exists := getResp.StatusCode() == 200 && getResp.JSON200 != nil
 
+	// srcType is the app's final deployment source ("git" or "docker"), used
+	// below to decide whether to wait on a build or on runtime readiness.
+	var srcType string
+
 	if exists {
 		app := *getResp.JSON200
 		changed, err := applySource(&app, f)
 		if err != nil {
 			return err
 		}
+		srcType = deploymentType(app.DeploymentSource)
 		if changed {
+			// domains/volumeMounts are required, non-nullable arrays; an app
+			// fetched with none set has them as nil, which marshals to null and
+			// is rejected on PUT. Send [] instead.
+			normalizeApp(&app)
 			upd, err := a.UpdateAppWithResponse(ctx, project, appName, app)
 			if err != nil {
 				return err
@@ -117,6 +126,7 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 		if err != nil {
 			return err
 		}
+		srcType = deploymentType(app.DeploymentSource)
 		crt, err := a.CreateAppWithResponse(ctx, project, app)
 		if err != nil {
 			return err
@@ -132,22 +142,40 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 		return nil
 	}
 
+	// A git source builds an image before running, so the build outcome is what
+	// we wait on. A docker-image source has no build phase (buildStatus stays
+	// empty), so we wait on runtime readiness instead.
+	expectBuild := srcType == string(api.Git)
+
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
 
-	var last api.AppStatusBuildStatus
-	res, err := client.PollBuild(ctx, a, project, appName, f.interval, func(st *api.AppStatus) {
-		if st.BuildStatus != nil && *st.BuildStatus != last {
-			last = *st.BuildStatus
+	var lastBuild api.AppStatusBuildStatus
+	var lastRuntime api.AppStatusRuntimeStatus
+	res, err := client.PollBuild(ctx, a, project, appName, f.interval, expectBuild, func(st *api.AppStatus) {
+		if st.BuildStatus != nil && *st.BuildStatus != "" && *st.BuildStatus != lastBuild {
+			lastBuild = *st.BuildStatus
 			fmt.Fprintf(out, "  build: %s\n", *st.BuildStatus)
+		}
+		if !expectBuild && st.RuntimeStatus != nil && *st.RuntimeStatus != lastRuntime {
+			lastRuntime = *st.RuntimeStatus
+			fmt.Fprintf(out, "  runtime: %s\n", *st.RuntimeStatus)
 		}
 	})
 	if err != nil {
 		if errors.Is(err, client.ErrBuildFailed) {
 			return fmt.Errorf("deploy failed: build did not succeed")
 		}
+		if errors.Is(err, client.ErrDeployFailed) {
+			return fmt.Errorf("deploy failed: app did not become healthy (runtime: %s)",
+				dash(string(res.RuntimeStatus)))
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("timed out after %s waiting for build", f.timeout)
+			what := "build"
+			if !expectBuild {
+				what = "app to become healthy"
+			}
+			return fmt.Errorf("timed out after %s waiting for %s", f.timeout, what)
 		}
 		return err
 	}
@@ -176,6 +204,34 @@ type dockSource struct {
 	Registry *string `json:"registry,omitempty"`
 	Username *string `json:"username,omitempty"`
 	Password *string `json:"password,omitempty"`
+}
+
+// normalizeApp replaces nil required-array fields with empty slices so they
+// serialize as [] rather than null, which the API schema rejects.
+func normalizeApp(app *api.App) {
+	if app.Domains == nil {
+		app.Domains = []string{}
+	}
+	if app.VolumeMounts == nil {
+		app.VolumeMounts = []struct {
+			MountPath *string `json:"mountPath,omitempty"`
+			Name      *string `json:"name,omitempty"`
+		}{}
+	}
+}
+
+// deploymentType reads the "type" discriminator ("git" or "docker") out of an
+// App's inline DeploymentSource via a JSON round-trip.
+func deploymentType(ds any) string {
+	b, err := json.Marshal(ds)
+	if err != nil {
+		return ""
+	}
+	var s deploymentSource
+	if err := json.Unmarshal(b, &s); err != nil {
+		return ""
+	}
+	return s.Type
 }
 
 // applySource patches app.DeploymentSource from any deploy flags that were set,

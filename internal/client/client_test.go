@@ -157,12 +157,58 @@ func TestPollBuild(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			res, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, nil)
+			res, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, true, nil)
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
 			if res.BuildStatus != tc.wantEnd {
 				t.Errorf("end build status = %q, want %q", res.BuildStatus, tc.wantEnd)
+			}
+		})
+	}
+}
+
+// TestPollBuildDocker covers a build-less (docker image) deploy: buildStatus
+// stays empty and the poll terminates on runtimeStatus instead.
+func TestPollBuildDocker(t *testing.T) {
+	tests := []struct {
+		name     string
+		statuses []api.AppStatusRuntimeStatus
+		wantErr  error
+		wantEnd  api.AppStatusRuntimeStatus
+	}{
+		{"running", []api.AppStatusRuntimeStatus{
+			api.AppStatusRuntimeStatusPending, api.AppStatusRuntimeStatusRunning,
+		}, nil, api.AppStatusRuntimeStatusRunning},
+		{"imagePullBackoff", []api.AppStatusRuntimeStatus{
+			api.AppStatusRuntimeStatusPending, api.AppStatusRuntimeStatusImagePullBackoff,
+		}, ErrDeployFailed, api.AppStatusRuntimeStatusImagePullBackoff},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var idx int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				i := atomic.AddInt32(&idx, 1) - 1
+				if int(i) >= len(tc.statuses) {
+					i = int32(len(tc.statuses) - 1)
+				}
+				rs := tc.statuses[i]
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(200)
+				w.Write([]byte(`{"buildStatus":"","runtimeStatus":"` + string(rs) + `"}`))
+			}))
+			defer srv.Close()
+
+			c, err := New(config.Resolved{Token: "t", APIURL: srv.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, false, nil)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if res.RuntimeStatus != tc.wantEnd {
+				t.Errorf("end runtime status = %q, want %q", res.RuntimeStatus, tc.wantEnd)
 			}
 		})
 	}
@@ -181,7 +227,7 @@ func TestPollBuildCancels(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := PollBuild(ctx, c, "proj", "app", 5*time.Millisecond, nil); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := PollBuild(ctx, c, "proj", "app", 5*time.Millisecond, true, nil); !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v, want DeadlineExceeded", err)
 	}
 }
