@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hostimdev/cli/api"
@@ -28,6 +29,7 @@ type deployFlags struct {
 	port     int
 	public   bool
 	domains  []string
+	volumes  []string
 
 	wait     bool
 	timeout  time.Duration
@@ -62,6 +64,7 @@ func newDeployCmd(c *cli) *cobra.Command {
 	fl.IntVar(&f.port, "port", 0, "HTTP port (on create)")
 	fl.BoolVar(&f.public, "public", true, "expose the app publicly (on create)")
 	fl.StringArrayVar(&f.domains, "domain", nil, "custom domain (repeatable, on create)")
+	fl.StringArrayVar(&f.volumes, "volume", nil, "mount a volume as name:mountPath (repeatable)")
 	fl.BoolVar(&f.wait, "wait", true, "wait for the build to finish (use --wait=false for fire-and-forget)")
 	fl.DurationVar(&f.timeout, "timeout", 15*time.Minute, "max time to wait for the build")
 	fl.DurationVar(&f.interval, "poll-interval", 3*time.Second, "status poll interval")
@@ -272,6 +275,15 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 		cur.Git = nil
 		changed = true
 	}
+	if len(f.volumes) > 0 {
+		mounts, err := parseVolumeMounts(f.volumes)
+		if err != nil {
+			return false, err
+		}
+		app.VolumeMounts = mounts
+		changed = true
+	}
+
 	if !changed {
 		return false, nil
 	}
@@ -316,6 +328,29 @@ func buildNewApp(name string, f *deployFlags) (api.App, error) {
 		return api.App{}, err
 	}
 	return app, nil
+}
+
+// parseVolumeMounts turns "name:/mount/path" flag values into App volume mounts.
+func parseVolumeMounts(specs []string) ([]struct {
+	MountPath *string `json:"mountPath,omitempty"`
+	Name      *string `json:"name,omitempty"`
+}, error) {
+	out := make([]struct {
+		MountPath *string `json:"mountPath,omitempty"`
+		Name      *string `json:"name,omitempty"`
+	}, 0, len(specs))
+	for _, s := range specs {
+		name, path, ok := strings.Cut(s, ":")
+		if !ok || name == "" || path == "" {
+			return nil, fmt.Errorf("invalid --volume %q (want name:/mount/path)", s)
+		}
+		n, p := name, path
+		out = append(out, struct {
+			MountPath *string `json:"mountPath,omitempty"`
+			Name      *string `json:"name,omitempty"`
+		}{MountPath: &p, Name: &n})
+	}
+	return out, nil
 }
 
 // setOpt sets *dst to a copy of v when v is non-empty.

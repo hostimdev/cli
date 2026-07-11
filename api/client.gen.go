@@ -4897,7 +4897,7 @@ func (r GetAppEnvResponse) ContentType() string {
 type SetAppEnvResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]EnvVar
+	JSON200      *GenericMessage
 	JSON401      *GenericMessage
 	JSON404      *GenericMessage
 	JSON500      *GenericMessage
@@ -5062,7 +5062,7 @@ func (r GetGlobalEnvResponse) ContentType() string {
 type SetGlobalEnvResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]EnvVar
+	JSON200      *GenericMessage
 	JSON401      *GenericMessage
 	JSON404      *GenericMessage
 	JSON500      *GenericMessage
@@ -7522,7 +7522,7 @@ func ParseSetAppEnvResponse(rsp *http.Response) (*SetAppEnvResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []EnvVar
+		var dest GenericMessage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -7757,7 +7757,7 @@ func ParseSetGlobalEnvResponse(rsp *http.Response) (*SetGlobalEnvResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []EnvVar
+		var dest GenericMessage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
