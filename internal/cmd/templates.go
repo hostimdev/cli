@@ -152,6 +152,7 @@ type applyFlags struct {
 	newProject string
 	region     string
 
+	save         string
 	skipExisting bool
 	yes          bool
 
@@ -173,6 +174,9 @@ func templatesApplyCmd(c *cli) *cobra.Command {
 			"  --compose <file>     a docker-compose file, converted to a template via the API\n\n" +
 			"The resources land in the resolved project (-p / current project) unless\n" +
 			"--new-project is given, which creates a fresh project first.\n\n" +
+			"Instead of deploying, pass --save <file> to write the resolved template to\n" +
+			"a local YAML file (works with --id and --compose too). Edit it, then deploy\n" +
+			"it with `apply -f <file>` — handy for fixing a converted compose file.\n\n" +
 			"Before anything is created, apply prints the resources it will deploy and\n" +
 			"asks for confirmation (skip with --yes).\n\n" +
 			"If any resource already exists in the target project, apply aborts before\n" +
@@ -189,6 +193,7 @@ func templatesApplyCmd(c *cli) *cobra.Command {
 	fl.StringVar(&f.compose, "compose", "", "docker-compose file to convert and deploy")
 	fl.StringVar(&f.newProject, "new-project", "", "create a new project with this name before deploying")
 	fl.StringVar(&f.region, "region", "", "region for --new-project")
+	fl.StringVar(&f.save, "save", "", "write the resolved template to this YAML file instead of deploying")
 	fl.BoolVar(&f.skipExisting, "skip-existing", false, "skip resources that already exist instead of aborting")
 	fl.BoolVarP(&f.yes, "yes", "y", false, "skip the confirmation prompt")
 	fl.BoolVar(&f.wait, "wait", true, "wait for each resource to become ready")
@@ -231,6 +236,14 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 		return err
 	}
 
+	// --save writes the template to a local file (with GENERATE_ME_<n>
+	// placeholders intact) instead of deploying, so the user can edit it and
+	// re-apply with -f. Validation issues are warned about, not fatal, so a
+	// converted compose file can be saved and then fixed.
+	if f.save != "" {
+		return saveTemplate(out, tmpl, f.save)
+	}
+
 	// Expand GENERATE_ME_<n> secrets now so the plan we show and the names we
 	// validate reflect exactly what will be created.
 	for i := range tmpl.Components.Apps {
@@ -245,7 +258,7 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 		return err
 	}
 	if err := validateNames(tmpl); err != nil {
-		return err
+		return fmt.Errorf("%w\n\ntip: save it with --save <file>, fix the names, then deploy with `apply -f <file>`", err)
 	}
 
 	// Review: show what will be deployed and confirm before creating anything.
@@ -700,6 +713,46 @@ func loadTemplateFile(path string) (*api.Template, error) {
 		return nil, fmt.Errorf("%s is not a valid template (missing name)", path)
 	}
 	return &t, nil
+}
+
+// saveTemplate writes a template to a local YAML file for editing. Validation
+// problems are reported as warnings (not errors) so a converted compose file
+// with, say, an over-long name can be saved and then fixed by hand.
+func saveTemplate(out io.Writer, tmpl *api.Template, path string) error {
+	data, err := templateToYAML(tmpl)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Saved template to %s (%s).\n", path, summarize(tmpl))
+	var warns []string
+	if err := checkPlans(tmpl); err != nil {
+		warns = append(warns, err.Error())
+	}
+	if err := validateNames(tmpl); err != nil {
+		warns = append(warns, err.Error())
+	}
+	for _, w := range warns {
+		fmt.Fprintf(out, "warning: %s\n", w)
+	}
+	fmt.Fprintf(out, "Edit it, then deploy with: hostim tpl apply -f %s -p <project>\n", path)
+	return nil
+}
+
+// templateToYAML renders a template as YAML using the JSON field names, so the
+// output round-trips through loadTemplateFile.
+func templateToYAML(tmpl *api.Template) ([]byte, error) {
+	jb, err := json.Marshal(tmpl)
+	if err != nil {
+		return nil, err
+	}
+	var doc any
+	if err := json.Unmarshal(jb, &doc); err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(doc)
 }
 
 // parseCompose sends a docker-compose file to the API, which converts it into a

@@ -164,6 +164,40 @@ func TestFindConflicts(t *testing.T) {
 	}
 }
 
+func TestTemplateToYAMLRoundTrip(t *testing.T) {
+	orig := &api.Template{Id: "demo", Name: "Demo", Description: "d"}
+	port := 3000
+	orig.Components.Apps = []api.App{{
+		Name:     "web",
+		Plan:     "sa-1-1",
+		HttpPort: &port,
+		EnvVars:  &[]api.EnvVar{{Name: "APP_SECRET", Value: "GENERATE_ME_32"}},
+	}}
+	orig.Components.Volumes = []api.Volume{{Name: "data", Plan: "vol-1"}}
+
+	data, err := templateToYAML(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.yml")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadTemplateFile(path)
+	if err != nil {
+		t.Fatalf("saved YAML did not round-trip: %v", err)
+	}
+	if got.Name != "Demo" || len(got.Components.Apps) != 1 || got.Components.Apps[0].HttpPort == nil || *got.Components.Apps[0].HttpPort != 3000 {
+		t.Fatalf("round-trip lost data: %+v", got)
+	}
+	// The GENERATE_ME placeholder must survive so apply regenerates the secret.
+	if (*got.Components.Apps[0].EnvVars)[0].Value != "GENERATE_ME_32" {
+		t.Errorf("placeholder not preserved: %q", (*got.Components.Apps[0].EnvVars)[0].Value)
+	}
+}
+
 func TestValidateNames(t *testing.T) {
 	ok := &api.Template{}
 	ok.Components.Apps = []api.App{{Name: "web-1"}}
