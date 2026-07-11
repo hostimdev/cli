@@ -164,6 +164,29 @@ func TestFindConflicts(t *testing.T) {
 	}
 }
 
+func TestValidateNames(t *testing.T) {
+	ok := &api.Template{}
+	ok.Components.Apps = []api.App{{Name: "web-1"}}
+	ok.Components.Volumes = []api.Volume{{Name: "data"}}
+	if err := validateNames(ok); err != nil {
+		t.Errorf("valid names rejected: %v", err)
+	}
+
+	bad := &api.Template{}
+	bad.Components.Volumes = []api.Volume{{Name: "minio-isb-client-config"}} // 23 chars
+	bad.Components.Apps = []api.App{{Name: "Bad_Name"}}                      // invalid chars
+	err := validateNames(bad)
+	if err == nil {
+		t.Fatal("expected error for invalid names")
+	}
+	if !strings.Contains(err.Error(), "minio-isb-client-config") || !strings.Contains(err.Error(), "max 20") {
+		t.Errorf("error missing length violation: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Bad_Name") {
+		t.Errorf("error missing char violation: %v", err)
+	}
+}
+
 func TestSummarize(t *testing.T) {
 	tmpl := &api.Template{}
 	tmpl.Components.Apps = []api.App{{Name: "a"}}

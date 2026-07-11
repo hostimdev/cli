@@ -47,6 +47,7 @@ func domainAddCmd(c *cli) *cobra.Command {
 
 func domainRemoveCmd(c *cli) *cobra.Command {
 	var app string
+	var yes bool
 	cmd := &cobra.Command{
 		Use:     "rm <domain>",
 		Aliases: []string{"remove", "delete"},
@@ -58,6 +59,9 @@ func domainRemoveCmd(c *cli) *cobra.Command {
 			}
 			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
+				return err
+			}
+			if err := confirmYesNo(cmd, fmt.Sprintf("Remove domain %s from app %s?", args[0], app), yes); err != nil {
 				return err
 			}
 			resp, err := a.RemoveDomainWithResponse(cmd.Context(), project, app, args[0])
@@ -72,5 +76,6 @@ func domainRemoveCmd(c *cli) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&app, "app", "", "app to remove the domain from (required)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	return cmd
 }

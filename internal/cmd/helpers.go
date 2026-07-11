@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/hostimdev/cli/api"
 	"github.com/hostimdev/cli/internal/client"
+	"github.com/spf13/cobra"
 )
 
 // projectIDPrefix is the prefix of the system-generated project identifiers used
@@ -64,6 +67,58 @@ func resolveProjectID(ctx context.Context, cl *api.ClientWithResponses, ref stri
 		}
 	}
 	return "", fmt.Errorf("project %q not found; available: %s", ref, strings.Join(names, ", "))
+}
+
+// isInteractive reports whether stdin is a terminal, so we can prompt the user.
+func isInteractive(cmd *cobra.Command) bool {
+	f, ok := cmd.InOrStdin().(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// confirmByName guards a destructive action by forcing the user to type the
+// resource's name back. It is a no-op when skip is true (e.g. --yes). In a
+// non-interactive session it refuses rather than deleting silently.
+func confirmByName(cmd *cobra.Command, kind, name string, skip bool) error {
+	if skip {
+		return nil
+	}
+	if !isInteractive(cmd) {
+		return fmt.Errorf("refusing to delete %s %q in a non-interactive session; re-run with --yes to confirm", kind, name)
+	}
+	fmt.Fprintf(cmd.OutOrStderr(),
+		"This permanently deletes %s %q and everything it contains. This cannot be undone.\n"+
+			"Type the %s name (%q) to confirm: ", kind, name, kind, name)
+	line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	if strings.TrimSpace(line) != name {
+		return fmt.Errorf("confirmation did not match %q; aborted", name)
+	}
+	return nil
+}
+
+// confirmYesNo asks a yes/no question, defaulting to no. It is a no-op when skip
+// is true. In a non-interactive session it refuses unless skip is set.
+func confirmYesNo(cmd *cobra.Command, prompt string, skip bool) error {
+	if skip {
+		return nil
+	}
+	if !isInteractive(cmd) {
+		return fmt.Errorf("%s (re-run with --yes to proceed non-interactively)", prompt)
+	}
+	fmt.Fprintf(cmd.OutOrStderr(), "%s [y/N]: ", prompt)
+	line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return nil
+	default:
+		return fmt.Errorf("aborted")
+	}
 }
 
 // str dereferences a *string, returning "" for nil.

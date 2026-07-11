@@ -153,6 +153,7 @@ type applyFlags struct {
 	region     string
 
 	skipExisting bool
+	yes          bool
 
 	wait     bool
 	timeout  time.Duration
@@ -172,6 +173,8 @@ func templatesApplyCmd(c *cli) *cobra.Command {
 			"  --compose <file>     a docker-compose file, converted to a template via the API\n\n" +
 			"The resources land in the resolved project (-p / current project) unless\n" +
 			"--new-project is given, which creates a fresh project first.\n\n" +
+			"Before anything is created, apply prints the resources it will deploy and\n" +
+			"asks for confirmation (skip with --yes).\n\n" +
 			"If any resource already exists in the target project, apply aborts before\n" +
 			"creating anything (so it never overwrites a scaled or configured resource).\n" +
 			"Pass --skip-existing to create only the resources that are missing.",
@@ -187,6 +190,7 @@ func templatesApplyCmd(c *cli) *cobra.Command {
 	fl.StringVar(&f.newProject, "new-project", "", "create a new project with this name before deploying")
 	fl.StringVar(&f.region, "region", "", "region for --new-project")
 	fl.BoolVar(&f.skipExisting, "skip-existing", false, "skip resources that already exist instead of aborting")
+	fl.BoolVarP(&f.yes, "yes", "y", false, "skip the confirmation prompt")
 	fl.BoolVar(&f.wait, "wait", true, "wait for each resource to become ready")
 	fl.DurationVar(&f.timeout, "timeout", 15*time.Minute, "max time to wait per resource")
 	fl.DurationVar(&f.interval, "poll-interval", 3*time.Second, "status poll interval")
@@ -227,6 +231,37 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 		return err
 	}
 
+	// Expand GENERATE_ME_<n> secrets now so the plan we show and the names we
+	// validate reflect exactly what will be created.
+	for i := range tmpl.Components.Apps {
+		if err := expandGenerateMe(&tmpl.Components.Apps[i]); err != nil {
+			return err
+		}
+	}
+
+	// Validate before touching anything (including before creating --new-project),
+	// so a bad name or missing plan never leaves an orphaned project behind.
+	if err := checkPlans(tmpl); err != nil {
+		return err
+	}
+	if err := validateNames(tmpl); err != nil {
+		return err
+	}
+
+	// Review: show what will be deployed and confirm before creating anything.
+	target := f.newProject
+	if target == "" {
+		if ref, perr := c.Project(); perr == nil {
+			target = ref
+		} else {
+			target = "the current project"
+		}
+	}
+	printPlan(out, tmpl, target)
+	if err := confirmYesNo(cmd, fmt.Sprintf("Deploy these resources into %q?", target), f.yes); err != nil {
+		return err
+	}
+
 	// Resolve (or create) the target project.
 	project, err := resolveApplyProject(ctx, out, c, a, f)
 	if err != nil {
@@ -234,6 +269,28 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 	}
 
 	return applyTemplate(ctx, out, a, project, tmpl, f.skipExisting, f.wait, f.timeout, f.interval)
+}
+
+// printPlan lists the resources a template will create, so the user can review
+// them before confirming the apply.
+func printPlan(out io.Writer, tmpl *api.Template, target string) {
+	fmt.Fprintf(out, "About to deploy %q (%s) into %q:\n", tmpl.Name, summarize(tmpl), target)
+	for _, v := range tmpl.Components.Volumes {
+		fmt.Fprintf(out, "  volume    %s (plan %s)\n", v.Name, v.Plan)
+	}
+	for _, d := range tmpl.Components.Postgres {
+		fmt.Fprintf(out, "  postgres  %s (plan %s)\n", d.Name, d.Plan)
+	}
+	for _, d := range tmpl.Components.Mysql {
+		fmt.Fprintf(out, "  mysql     %s (plan %s)\n", d.Name, d.Plan)
+	}
+	for _, d := range tmpl.Components.Redis {
+		fmt.Fprintf(out, "  redis     %s (plan %s)\n", d.Name, d.Plan)
+	}
+	for i := range tmpl.Components.Apps {
+		app := tmpl.Components.Apps[i]
+		fmt.Fprintf(out, "  app       %s (%s, plan %s%s)\n", app.Name, describeSource(&app), app.Plan, portSuffix(app.HttpPort))
+	}
 }
 
 // existingResources holds the names of resources already present in a project,
@@ -406,19 +463,6 @@ func resolveApplyProject(ctx context.Context, out io.Writer, c *cli, a *api.Clie
 // (volumes, postgres, mysql, redis, then apps), waiting for each to be ready.
 func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponses, project string, tmpl *api.Template, skipExisting, wait bool, timeout, interval time.Duration) error {
 	comps := tmpl.Components
-
-	// The dashboard replaces GENERATE_ME_<n> env values with a random secret
-	// client-side; the backend does not, so we do the same here.
-	for i := range comps.Apps {
-		if err := expandGenerateMe(&comps.Apps[i]); err != nil {
-			return err
-		}
-	}
-
-	// Fail before creating anything if any resource lacks a plan.
-	if err := checkPlans(tmpl); err != nil {
-		return err
-	}
 
 	// Pre-flight: never overwrite resources that already exist. Abort before
 	// creating anything unless the caller opted into skipping them.
@@ -756,6 +800,49 @@ func checkPlans(t *api.Template) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("template has resources without a plan: %s (set 'plan:' for each; see `hostim regions pricing`)", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// nameRe mirrors the backend's DNS-1035 resource-name rule: lowercase letter
+// first, then lowercase alphanumerics or '-', ending alphanumeric.
+var nameRe = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
+
+// maxNameLen mirrors the backend's 20-character cap on resource names.
+const maxNameLen = 20
+
+// validateNames checks every resource name against the platform's rules before
+// apply creates anything, so a bad name (common in converted compose files)
+// fails up front with a clear message instead of mid-deploy.
+func validateNames(t *api.Template) error {
+	var bad []string
+	check := func(kind, name string) {
+		switch {
+		case len(name) > maxNameLen:
+			bad = append(bad, fmt.Sprintf("%s %q: %d chars, max %d", kind, name, len(name), maxNameLen))
+		case !nameRe.MatchString(name):
+			bad = append(bad, fmt.Sprintf("%s %q: must be lowercase letters, digits and '-', start with a letter", kind, name))
+		}
+	}
+	for _, v := range t.Components.Volumes {
+		check("volume", v.Name)
+	}
+	for _, d := range t.Components.Postgres {
+		check("postgres", d.Name)
+	}
+	for _, d := range t.Components.Mysql {
+		check("mysql", d.Name)
+	}
+	for _, d := range t.Components.Redis {
+		check("redis", d.Name)
+	}
+	for _, a := range t.Components.Apps {
+		check("app", a.Name)
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("some resource names are not valid:\n  %s\n"+
+			"edit the template (or rename the compose services/volumes) and try again",
+			strings.Join(bad, "\n  "))
 	}
 	return nil
 }

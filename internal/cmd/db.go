@@ -232,7 +232,8 @@ func dbCreate(c *cli, engine string, fn func(*cobra.Command, *api.ClientWithResp
 }
 
 func dbRemove(c *cli, engine string, fn func(*cobra.Command, *api.ClientWithResponses, string, string) (int, []byte, error)) *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:     "rm <name>",
 		Aliases: []string{"delete", "remove"},
 		Short:   "Delete a " + engine + " database",
@@ -240,6 +241,9 @@ func dbRemove(c *cli, engine string, fn func(*cobra.Command, *api.ClientWithResp
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
+				return err
+			}
+			if err := confirmByName(cmd, engine+" database", args[0], yes); err != nil {
 				return err
 			}
 			st, body, err := fn(cmd, a, project, args[0])
@@ -253,6 +257,8 @@ func dbRemove(c *cli, engine string, fn func(*cobra.Command, *api.ClientWithResp
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
+	return cmd
 }
 
 // statusCarrier is implemented by every generated *WithResponse type.

@@ -101,7 +101,8 @@ func appsGetCmd(c *cli) *cobra.Command {
 }
 
 func appsRemoveCmd(c *cli) *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:     "rm <app>",
 		Aliases: []string{"delete", "remove"},
 		Short:   "Delete an app",
@@ -109,6 +110,9 @@ func appsRemoveCmd(c *cli) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
+				return err
+			}
+			if err := confirmByName(cmd, "app", args[0], yes); err != nil {
 				return err
 			}
 			resp, err := cl.DeleteAppWithResponse(cmd.Context(), project, args[0])
@@ -122,6 +126,8 @@ func appsRemoveCmd(c *cli) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
+	return cmd
 }
 
 func appsRebuildCmd(c *cli) *cobra.Command {

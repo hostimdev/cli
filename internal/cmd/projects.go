@@ -129,7 +129,8 @@ func projectsCreateCmd(c *cli) *cobra.Command {
 }
 
 func projectsRemoveCmd(c *cli) *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:     "rm <project>",
 		Aliases: []string{"delete", "remove"},
 		Short:   "Delete a project",
@@ -143,6 +144,9 @@ func projectsRemoveCmd(c *cli) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := confirmByName(cmd, "project", args[0], yes); err != nil {
+				return err
+			}
 			resp, err := cl.DeleteProjectWithResponse(cmd.Context(), id)
 			if err != nil {
 				return err
@@ -154,6 +158,8 @@ func projectsRemoveCmd(c *cli) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
+	return cmd
 }
 
 func deployed(f *float32) int {

@@ -117,7 +117,8 @@ func volumesCreateCmd(c *cli) *cobra.Command {
 }
 
 func volumesRemoveCmd(c *cli) *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:     "rm <volume>",
 		Aliases: []string{"delete", "remove"},
 		Short:   "Delete a volume",
@@ -125,6 +126,9 @@ func volumesRemoveCmd(c *cli) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
+				return err
+			}
+			if err := confirmByName(cmd, "volume", args[0], yes); err != nil {
 				return err
 			}
 			resp, err := cl.DeleteVolumeWithResponse(cmd.Context(), project, args[0])
@@ -138,6 +142,8 @@ func volumesRemoveCmd(c *cli) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
+	return cmd
 }
 
 func api2Volume(name, plan string, sizeMB float32) api.Volume {
