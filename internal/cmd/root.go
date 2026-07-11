@@ -80,6 +80,7 @@ func Execute() {
 		newWhoamiCmd(c),
 		newUseCmd(c),
 		newDeployCmd(c),
+		newTemplatesCmd(c),
 		newStatusCmd(c),
 		newProjectsCmd(c),
 		newAppsCmd(c),

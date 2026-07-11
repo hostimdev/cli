@@ -694,6 +694,28 @@ type Region struct {
 	Name        *string `json:"name,omitempty"`
 }
 
+// Template defines model for Template.
+type Template struct {
+	// Category Logical grouping for UI (e.g. 'Examples', 'Open Source', 'Custom')
+	Category   *string `json:"category,omitempty"`
+	Components struct {
+		Apps     []App      `json:"apps"`
+		Mysql    []MySQL    `json:"mysql"`
+		Postgres []Postgres `json:"postgres"`
+		Redis    []Redis    `json:"redis"`
+		Volumes  []Volume   `json:"volumes"`
+	} `json:"components"`
+	Description string `json:"description"`
+	Id          string `json:"id"`
+	Name        string `json:"name"`
+
+	// Notes Optional setup notes or tips, such as default credentials
+	Notes *[]string `json:"notes,omitempty"`
+
+	// SourceUrl Optional link to GitHub or external documentation
+	SourceUrl *string `json:"sourceUrl,omitempty"`
+}
+
 // Volume defines model for Volume.
 type Volume struct {
 	// Cost The cost of the volume per month
@@ -757,6 +779,12 @@ type SetAppEnvJSONBody = []EnvVar
 // SetGlobalEnvJSONBody defines parameters for SetGlobalEnv.
 type SetGlobalEnvJSONBody = []EnvVar
 
+// ParseDockerComposeJSONBody defines parameters for ParseDockerCompose.
+type ParseDockerComposeJSONBody struct {
+	// ComposeYAML Raw Docker Compose YAML content
+	ComposeYAML string `json:"composeYAML"`
+}
+
 // UpdateProjectJSONRequestBody defines body for UpdateProject for application/json ContentType.
 type UpdateProjectJSONRequestBody = UpdateProjectJSONBody
 
@@ -801,6 +829,9 @@ type UpdateVolumeJSONRequestBody = Volume
 
 // CreateVolumeJSONRequestBody defines body for CreateVolume for application/json ContentType.
 type CreateVolumeJSONRequestBody = Volume
+
+// ParseDockerComposeJSONRequestBody defines body for ParseDockerCompose for application/json ContentType.
+type ParseDockerComposeJSONRequestBody ParseDockerComposeJSONBody
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -1069,6 +1100,14 @@ type ClientInterface interface {
 
 	// GetRegionVolumePricing request
 	GetRegionVolumePricing(ctx context.Context, regionName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTemplates request
+	GetTemplates(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ParseDockerComposeWithBody request with any body
+	ParseDockerComposeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ParseDockerCompose(ctx context.Context, body ParseDockerComposeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) GetProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1901,6 +1940,42 @@ func (c *Client) GetRegionRedisPricing(ctx context.Context, regionName string, r
 
 func (c *Client) GetRegionVolumePricing(ctx context.Context, regionName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetRegionVolumePricingRequest(c.Server, regionName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetTemplates(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTemplatesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ParseDockerComposeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewParseDockerComposeRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ParseDockerCompose(ctx context.Context, body ParseDockerComposeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewParseDockerComposeRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4226,6 +4301,73 @@ func NewGetRegionVolumePricingRequest(server string, regionName string) (*http.R
 	return req, nil
 }
 
+// NewGetTemplatesRequest generates requests for GetTemplates
+func NewGetTemplatesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/templates")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewParseDockerComposeRequest calls the generic ParseDockerCompose builder with application/json body
+func NewParseDockerComposeRequest(server string, body ParseDockerComposeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewParseDockerComposeRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewParseDockerComposeRequestWithBody generates requests for ParseDockerCompose with any type of body
+func NewParseDockerComposeRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/templates/docker-compose")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -4463,6 +4605,14 @@ type ClientWithResponsesInterface interface {
 
 	// GetRegionVolumePricingWithResponse request
 	GetRegionVolumePricingWithResponse(ctx context.Context, regionName string, reqEditors ...RequestEditorFn) (*GetRegionVolumePricingResponse, error)
+
+	// GetTemplatesWithResponse request
+	GetTemplatesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTemplatesResponse, error)
+
+	// ParseDockerComposeWithBodyWithResponse request with any body
+	ParseDockerComposeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ParseDockerComposeResponse, error)
+
+	ParseDockerComposeWithResponse(ctx context.Context, body ParseDockerComposeJSONRequestBody, reqEditors ...RequestEditorFn) (*ParseDockerComposeResponse, error)
 }
 
 type GetProjectsResponse struct {
@@ -6281,6 +6431,72 @@ func (r GetRegionVolumePricingResponse) ContentType() string {
 	return ""
 }
 
+type GetTemplatesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]Template
+	JSON401      *GenericMessage
+	JSON404      *GenericMessage
+	JSON500      *GenericMessage
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTemplatesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTemplatesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTemplatesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ParseDockerComposeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Template
+	JSON400      *GenericMessage
+	JSON401      *GenericMessage
+	JSON500      *GenericMessage
+}
+
+// Status returns HTTPResponse.Status
+func (r ParseDockerComposeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ParseDockerComposeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ParseDockerComposeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetProjectsWithResponse request returning *GetProjectsResponse
 func (c *ClientWithResponses) GetProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetProjectsResponse, error) {
 	rsp, err := c.GetProjects(ctx, reqEditors...)
@@ -6894,6 +7110,32 @@ func (c *ClientWithResponses) GetRegionVolumePricingWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseGetRegionVolumePricingResponse(rsp)
+}
+
+// GetTemplatesWithResponse request returning *GetTemplatesResponse
+func (c *ClientWithResponses) GetTemplatesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTemplatesResponse, error) {
+	rsp, err := c.GetTemplates(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTemplatesResponse(rsp)
+}
+
+// ParseDockerComposeWithBodyWithResponse request with arbitrary body returning *ParseDockerComposeResponse
+func (c *ClientWithResponses) ParseDockerComposeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ParseDockerComposeResponse, error) {
+	rsp, err := c.ParseDockerComposeWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseParseDockerComposeResponse(rsp)
+}
+
+func (c *ClientWithResponses) ParseDockerComposeWithResponse(ctx context.Context, body ParseDockerComposeJSONRequestBody, reqEditors ...RequestEditorFn) (*ParseDockerComposeResponse, error) {
+	rsp, err := c.ParseDockerCompose(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseParseDockerComposeResponse(rsp)
 }
 
 // ParseGetProjectsResponse parses an HTTP response from a GetProjectsWithResponse call
@@ -9475,6 +9717,100 @@ func ParseGetRegionVolumePricingResponse(rsp *http.Response) (*GetRegionVolumePr
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetTemplatesResponse parses an HTTP response from a GetTemplatesWithResponse call
+func ParseGetTemplatesResponse(rsp *http.Response) (*GetTemplatesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTemplatesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Template
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseParseDockerComposeResponse parses an HTTP response from a ParseDockerComposeWithResponse call
+func ParseParseDockerComposeResponse(rsp *http.Response) (*ParseDockerComposeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ParseDockerComposeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Template
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GenericMessage
