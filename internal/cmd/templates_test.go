@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bufio"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +10,65 @@ import (
 
 	"github.com/hostimdev/cli/api"
 )
+
+func TestAppSourceIncomplete(t *testing.T) {
+	img := "nginx"
+	ok := &api.App{}
+	ok.DeploymentSource.Type = api.Docker
+	ok.DeploymentSource.Docker = &struct {
+		Image    string  `json:"image"`
+		Password *string `json:"password,omitempty"`
+		Registry *string `json:"registry,omitempty"`
+		Username *string `json:"username,omitempty"`
+	}{Image: img}
+	if appSourceIncomplete(ok) {
+		t.Error("docker app with image should be complete")
+	}
+
+	empty := &api.App{}
+	empty.DeploymentSource.Type = api.Git // git with nil source
+	if !appSourceIncomplete(empty) {
+		t.Error("git app with no url should be incomplete")
+	}
+
+	none := &api.App{} // no type at all
+	if !appSourceIncomplete(none) {
+		t.Error("app with no type should be incomplete")
+	}
+}
+
+func TestPromptAppSource(t *testing.T) {
+	// docker path: type, image, decline private creds.
+	app := &api.App{}
+	r := bufio.NewReader(strings.NewReader("docker\nnginx:latest\nn\n"))
+	if err := promptAppSource(io.Discard, r, app); err != nil {
+		t.Fatal(err)
+	}
+	if appSourceIncomplete(app) || app.DeploymentSource.Type != api.Docker || app.DeploymentSource.Docker.Image != "nginx:latest" {
+		t.Errorf("docker source not filled in: %+v", app.DeploymentSource)
+	}
+
+	// git path: type, url, default branch + dockerfile, decline token.
+	gapp := &api.App{}
+	r = bufio.NewReader(strings.NewReader("git\ngit@github.com:u/r.git\n\n\nn\n"))
+	if err := promptAppSource(io.Discard, r, gapp); err != nil {
+		t.Fatal(err)
+	}
+	if appSourceIncomplete(gapp) || gapp.DeploymentSource.Type != api.Git {
+		t.Fatalf("git source not filled in: %+v", gapp.DeploymentSource)
+	}
+	g := gapp.DeploymentSource.Git
+	if g.Url != "git@github.com:u/r.git" || g.Branch == nil || *g.Branch != "main" || g.Dockerfilepath == nil || *g.Dockerfilepath != "Dockerfile" {
+		t.Errorf("git defaults wrong: %+v", g)
+	}
+
+	// EOF before required value aborts.
+	bad := &api.App{}
+	r = bufio.NewReader(strings.NewReader("docker\n"))
+	if err := promptAppSource(io.Discard, r, bad); err == nil {
+		t.Error("expected abort on EOF before required image")
+	}
+}
 
 func TestSecureRandom(t *testing.T) {
 	s, err := secureRandom(24)

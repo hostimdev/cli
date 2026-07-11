@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -252,6 +253,13 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 		}
 	}
 
+	// Some apps (typically compose services that build from a local Dockerfile)
+	// arrive without a usable deployment source. Mirror the dashboard: guide the
+	// user to supply a docker image or git repo before deploying.
+	if err := completeAppSources(cmd, out, tmpl); err != nil {
+		return err
+	}
+
 	// Validate before touching anything (including before creating --new-project),
 	// so a bad name or missing plan never leaves an orphaned project behind.
 	if err := checkPlans(tmpl); err != nil {
@@ -304,6 +312,181 @@ func printPlan(out io.Writer, tmpl *api.Template, target string) {
 		app := tmpl.Components.Apps[i]
 		fmt.Fprintf(out, "  app       %s (%s, plan %s%s)\n", app.Name, describeSource(&app), app.Plan, portSuffix(app.HttpPort))
 	}
+}
+
+// appSourceIncomplete reports whether an app lacks a usable deployment source:
+// a docker source with no image, a git source with no URL, or no type at all.
+// These are common in converted compose files whose services build from a local
+// Dockerfile, which the platform cannot do.
+func appSourceIncomplete(app *api.App) bool {
+	ds := app.DeploymentSource
+	switch ds.Type {
+	case api.Docker:
+		return ds.Docker == nil || ds.Docker.Image == ""
+	case api.Git:
+		return ds.Git == nil || ds.Git.Url == ""
+	default:
+		return true
+	}
+}
+
+// incompleteSourceNames lists the apps whose deployment source is incomplete.
+func incompleteSourceNames(tmpl *api.Template) []string {
+	var names []string
+	for i := range tmpl.Components.Apps {
+		if appSourceIncomplete(&tmpl.Components.Apps[i]) {
+			names = append(names, tmpl.Components.Apps[i].Name)
+		}
+	}
+	return names
+}
+
+// completeAppSources fills in any app with an incomplete deployment source,
+// mirroring the dashboard's "Needs configuration" step. In an interactive
+// session it prompts for a docker image or git repo; otherwise it fails with a
+// message pointing at --save so the user can edit the template by hand.
+func completeAppSources(cmd *cobra.Command, out io.Writer, tmpl *api.Template) error {
+	names := incompleteSourceNames(tmpl)
+	if len(names) == 0 {
+		return nil
+	}
+	if !isInteractive(cmd) {
+		return fmt.Errorf("these apps have no deployment source: %s\n"+
+			"(the compose services likely build from a local Dockerfile, which the platform can't do)\n"+
+			"save the template with --save <file>, set a docker image or git repo for each app, "+
+			"then deploy with `apply -f <file>`", strings.Join(names, ", "))
+	}
+	r := bufio.NewReader(cmd.InOrStdin())
+	for i := range tmpl.Components.Apps {
+		app := &tmpl.Components.Apps[i]
+		if !appSourceIncomplete(app) {
+			continue
+		}
+		fmt.Fprintf(out, "\nApp %q needs a deployment source (its compose service builds from a local Dockerfile).\n", app.Name)
+		if err := promptAppSource(out, r, app); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// promptAppSource interactively collects a docker image or git repo for an app
+// and writes it into the app's deployment source.
+func promptAppSource(out io.Writer, r *bufio.Reader, app *api.App) error {
+	typ, err := promptStr(out, r, "Deployment type [docker/git]", "docker")
+	if err != nil {
+		return err
+	}
+	ds := deploymentSource{}
+	switch strings.ToLower(strings.TrimSpace(typ)) {
+	case "git":
+		url, err := promptRequired(out, r, "Git repository URL (e.g. git@github.com:user/repo.git)")
+		if err != nil {
+			return err
+		}
+		branch, err := promptStr(out, r, "Branch", "main")
+		if err != nil {
+			return err
+		}
+		dockerfile, err := promptStr(out, r, "Dockerfile path", "Dockerfile")
+		if err != nil {
+			return err
+		}
+		ds.Type = string(api.Git)
+		ds.Git = &gitSource{Url: url}
+		setOpt(&ds.Git.Branch, branch)
+		setOpt(&ds.Git.Dockerfilepath, dockerfile)
+		private, err := promptYes(out, r, "Private repo? provide an access token")
+		if err != nil {
+			return err
+		}
+		if private {
+			token, err := promptStr(out, r, "Access token", "")
+			if err != nil {
+				return err
+			}
+			setOpt(&ds.Git.Token, token)
+		}
+	default: // docker
+		image, err := promptRequired(out, r, "Docker image (e.g. nginx:latest)")
+		if err != nil {
+			return err
+		}
+		ds.Type = string(api.Docker)
+		ds.Docker = &dockSource{Image: image}
+		private, err := promptYes(out, r, "Private registry? provide credentials")
+		if err != nil {
+			return err
+		}
+		if private {
+			registry, err := promptStr(out, r, "Registry (blank for Docker Hub)", "")
+			if err != nil {
+				return err
+			}
+			user, err := promptStr(out, r, "Username", "")
+			if err != nil {
+				return err
+			}
+			pass, err := promptStr(out, r, "Password", "")
+			if err != nil {
+				return err
+			}
+			setOpt(&ds.Docker.Registry, registry)
+			setOpt(&ds.Docker.Username, user)
+			setOpt(&ds.Docker.Password, pass)
+		}
+	}
+	nb, err := json.Marshal(ds)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(nb, &app.DeploymentSource)
+}
+
+// errInputAborted is returned when the user ends input (EOF) at a prompt.
+var errInputAborted = errors.New("input aborted")
+
+// promptStr asks for a line, returning def when the user just hits enter. EOF
+// with no input aborts.
+func promptStr(out io.Writer, r *bufio.Reader, label, def string) (string, error) {
+	if def != "" {
+		fmt.Fprintf(out, "%s (%s): ", label, def)
+	} else {
+		fmt.Fprintf(out, "%s: ", label)
+	}
+	line, err := r.ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line == "" {
+		if err != nil {
+			return "", errInputAborted
+		}
+		return def, nil
+	}
+	return line, nil
+}
+
+// promptRequired asks until a non-empty value is given (or the user aborts).
+func promptRequired(out io.Writer, r *bufio.Reader, label string) (string, error) {
+	for {
+		v, err := promptStr(out, r, label, "")
+		if err != nil {
+			return "", err
+		}
+		if v != "" {
+			return v, nil
+		}
+		fmt.Fprintln(out, "  (required)")
+	}
+}
+
+// promptYes asks a yes/no question defaulting to no.
+func promptYes(out io.Writer, r *bufio.Reader, label string) (bool, error) {
+	v, err := promptStr(out, r, label+" [y/N]", "")
+	if err != nil {
+		return false, err
+	}
+	v = strings.ToLower(v)
+	return v == "y" || v == "yes", nil
 }
 
 // existingResources holds the names of resources already present in a project,
@@ -733,6 +916,9 @@ func saveTemplate(out io.Writer, tmpl *api.Template, path string) error {
 	}
 	if err := validateNames(tmpl); err != nil {
 		warns = append(warns, err.Error())
+	}
+	if names := incompleteSourceNames(tmpl); len(names) > 0 {
+		warns = append(warns, fmt.Sprintf("these apps have no deployment source (set a docker image or git repo): %s", strings.Join(names, ", ")))
 	}
 	for _, w := range warns {
 		fmt.Fprintf(out, "warning: %s\n", w)
