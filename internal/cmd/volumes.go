@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/hostimdev/cli/api"
 	"github.com/spf13/cobra"
+
+	"github.com/hostimdev/cli/api"
 )
 
 func newVolumesCmd(c *cli) *cobra.Command {

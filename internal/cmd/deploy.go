@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/hostimdev/cli/api"
 	"github.com/hostimdev/cli/internal/client"
-	"github.com/spf13/cobra"
 )
 
 type deployFlags struct {

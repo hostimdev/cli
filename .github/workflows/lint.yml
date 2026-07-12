@@ -1,0 +1,26 @@
+name: lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Unpinned on purpose: always run the latest golangci-lint so new checks
+      # surface early. Trade-off: a new release can fail an unrelated PR.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+
+      - name: gofmt / goimports check
+        run: golangci-lint fmt --diff

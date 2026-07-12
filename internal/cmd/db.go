@@ -7,8 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hostimdev/cli/api"
 	"github.com/spf13/cobra"
+
+	"github.com/hostimdev/cli/api"
 )
 
 func newDBCmd(c *cli) *cobra.Command {
@@ -281,7 +282,7 @@ func status[T interface {
 // bodyOf reads the `Body []byte` field present on every generated response type.
 func bodyOf(v any) []byte {
 	rv := reflect.ValueOf(v)
-	for rv.Kind() == reflect.Ptr {
+	for rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
 			return nil
 		}

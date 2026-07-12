@@ -8,8 +8,9 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/hostimdev/cli/api"
 	"github.com/spf13/cobra"
+
+	"github.com/hostimdev/cli/api"
 )
 
 func newOverviewCmd(c *cli) *cobra.Command {

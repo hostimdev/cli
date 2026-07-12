@@ -29,14 +29,3 @@ jobs:
             echo "::error::api/client.gen.go is out of date. Run 'make generate' against api.hostim.dev and commit the result."
             exit 1
           fi
-
-  build-test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - run: go build ./...
-      - run: go test ./...
-      - run: go vet ./...

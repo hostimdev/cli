@@ -4,6 +4,10 @@ Command-line interface for the [Hostim](https://hostim.dev) cloud platform.
 Provision and manage projects, apps, databases (MySQL/Postgres/Redis) and
 volumes from your terminal or CI pipeline, over the public REST API.
 
+> **Beta.** The Hostim CLI and the public API it uses are in beta. Commands,
+> flags, output, and API responses can change between releases. Check the
+> release notes before you upgrade.
+
 ## Install
 
 ```sh

@@ -1,0 +1,78 @@
+name: release
+
+# Every push to main cuts a new patch release: a vX.Y.Z tag is created and
+# GoReleaser builds cross-platform binaries + checksums and publishes them to a
+# GitHub Release, so users can always download the latest. Use the "Run
+# workflow" button (workflow_dispatch) with bump=minor|major for bigger bumps.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version part to bump"
+        type: choice
+        default: patch
+        options: [patch, minor, major]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: version
+        run: |
+          set -euo pipefail
+          BUMP="${{ github.event.inputs.bump || 'patch' }}"
+          LATEST_TAG=$(git describe --tags --match "v*" --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$LATEST_TAG" ]; then
+            # First release of a beta CLI.
+            NEW_VERSION="0.1.0"
+          else
+            V=${LATEST_TAG#v}
+            MAJOR=$(echo "$V" | cut -d. -f1)
+            MINOR=$(echo "$V" | cut -d. -f2)
+            PATCH=$(echo "$V" | cut -d. -f3)
+            case "$BUMP" in
+              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+              *)     PATCH=$((PATCH + 1)) ;;
+            esac
+            NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          fi
+
+          echo "tag=v$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Next version: v$NEW_VERSION"
+
+      - name: Create and push tag
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.tag }}

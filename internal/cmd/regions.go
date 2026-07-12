@@ -5,8 +5,9 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/hostimdev/cli/api"
 	"github.com/spf13/cobra"
+
+	"github.com/hostimdev/cli/api"
 )
 
 func newRegionsCmd(c *cli) *cobra.Command {

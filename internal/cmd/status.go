@@ -3,8 +3,9 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/hostimdev/cli/api"
 	"github.com/spf13/cobra"
+
+	"github.com/hostimdev/cli/api"
 )
 
 func newStatusCmd(c *cli) *cobra.Command {

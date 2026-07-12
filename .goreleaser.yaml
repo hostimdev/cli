@@ -28,16 +28,21 @@ archives:
 checksum:
   name_template: checksums.txt
 
-# Publishing (Homebrew tap, release notes) is wired but intentionally left for a
-# follow-up: fill in the tap repo + token when we're ready to ship binaries.
-brews:
-  - name: hostim
-    repository:
-      owner: hostimdev
-      name: homebrew-tap
-    homepage: https://hostim.dev
-    description: Command-line interface for the Hostim cloud platform
-    skip_upload: auto
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "merge conflict"
+
+# Homebrew publishing is deferred until the tap repo + token exist. Add a
+# `homebrew_casks:` block (goreleaser v2's current syntax) when ready to ship it.
 
 release:
-  draft: true
+  # Publish immediately so users can always grab the latest binary. The CLI is
+  # beta, so tag pre-1.0 releases as pre-releases automatically.
+  draft: false
+  prerelease: auto

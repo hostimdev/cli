@@ -7,8 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hostimdev/cli/api"
 	"github.com/spf13/cobra"
+
+	"github.com/hostimdev/cli/api"
 )
 
 // envScope resolves whether a command targets an app's env or the project-global

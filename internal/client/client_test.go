@@ -51,7 +51,7 @@ func TestBearerHeaderInjected(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		w.WriteHeader(200)
-		w.Write([]byte("[]"))
+		_, _ = w.Write([]byte("[]"))
 	}))
 	defer srv.Close()
 
@@ -73,11 +73,11 @@ func TestRetryOn429RespectsRetryAfter(t *testing.T) {
 		if atomic.AddInt32(&calls, 1) == 1 {
 			w.Header().Set("Retry-After", "0") // don't slow the test
 			w.WriteHeader(http.StatusTooManyRequests)
-			w.Write([]byte(`{"error":"rate_limited"}`))
+			_, _ = w.Write([]byte(`{"error":"rate_limited"}`))
 			return
 		}
 		w.WriteHeader(200)
-		w.Write([]byte("[]"))
+		_, _ = w.Write([]byte("[]"))
 	}))
 	defer srv.Close()
 
@@ -103,7 +103,7 @@ func TestRetryGivesUpAfterMax(t *testing.T) {
 		atomic.AddInt32(&calls, 1)
 		w.Header().Set("Retry-After", "0")
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":"rate_limited"}`))
+		_, _ = w.Write([]byte(`{"error":"rate_limited"}`))
 	}))
 	defer srv.Close()
 
@@ -149,7 +149,7 @@ func TestPollBuild(t *testing.T) {
 				bs := tc.statuses[i]
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(200)
-				w.Write([]byte(`{"buildStatus":"` + string(bs) + `"}`))
+				_, _ = w.Write([]byte(`{"buildStatus":"` + string(bs) + `"}`))
 			}))
 			defer srv.Close()
 
@@ -195,7 +195,7 @@ func TestPollBuildDocker(t *testing.T) {
 				rs := tc.statuses[i]
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(200)
-				w.Write([]byte(`{"buildStatus":"","runtimeStatus":"` + string(rs) + `"}`))
+				_, _ = w.Write([]byte(`{"buildStatus":"","runtimeStatus":"` + string(rs) + `"}`))
 			}))
 			defer srv.Close()
 
@@ -217,7 +217,7 @@ func TestPollBuildDocker(t *testing.T) {
 func TestPollBuildCancels(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
-		w.Write([]byte(`{"buildStatus":"running"}`))
+		_, _ = w.Write([]byte(`{"buildStatus":"running"}`))
 	}))
 	defer srv.Close()
 

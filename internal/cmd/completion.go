@@ -11,7 +11,7 @@ func newCompletionCmd() *cobra.Command {
 		Use:       "completion [bash|zsh|fish|powershell]",
 		Short:     "Generate shell completion script",
 		Long:      "Output a shell completion script. For example:\n\n  hostim completion zsh > \"${fpath[1]}/_hostim\"",
-		Args:      cobra.ExactValidArgs(1),
+		Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
 		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {

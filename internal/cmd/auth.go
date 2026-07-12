@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hostimdev/cli/internal/client"
-	"github.com/hostimdev/cli/internal/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+
+	"github.com/hostimdev/cli/internal/client"
+	"github.com/hostimdev/cli/internal/config"
 )
 
 func newLoginCmd(c *cli) *cobra.Command {

@@ -15,10 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hostimdev/cli/api"
-	"github.com/hostimdev/cli/internal/client"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	"github.com/hostimdev/cli/api"
+	"github.com/hostimdev/cli/internal/client"
 )
 
 func newTemplatesCmd(c *cli) *cobra.Command {

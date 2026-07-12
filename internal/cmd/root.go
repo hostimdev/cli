@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
+
 	"github.com/hostimdev/cli/api"
 	"github.com/hostimdev/cli/internal/client"
 	"github.com/hostimdev/cli/internal/config"
 	"github.com/hostimdev/cli/internal/output"
-	"github.com/spf13/cobra"
 )
 
 // version is set via -ldflags at build time (see Makefile).

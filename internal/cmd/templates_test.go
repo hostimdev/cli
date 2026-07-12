@@ -138,7 +138,7 @@ func TestLoadTemplateFile(t *testing.T) {
 
 	// A single template with camelCase keys must decode via json tags.
 	path := filepath.Join(dir, "tpl.yml")
-	os.WriteFile(path, []byte(`
+	_ = os.WriteFile(path, []byte(`
 id: demo
 name: Demo
 description: test
@@ -179,7 +179,7 @@ components:
 
 	// A list of templates is a common mistake and must be rejected clearly.
 	listPath := filepath.Join(dir, "list.yml")
-	os.WriteFile(listPath, []byte("- name: a\n- name: b\n"), 0o600)
+	_ = os.WriteFile(listPath, []byte("- name: a\n- name: b\n"), 0o600)
 	if _, err := loadTemplateFile(listPath); err == nil || !strings.Contains(err.Error(), "list of templates") {
 		t.Errorf("list file error = %v, want 'list of templates'", err)
 	}

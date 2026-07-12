@@ -8,9 +8,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/hostimdev/cli/api"
 	"github.com/hostimdev/cli/internal/client"
-	"github.com/spf13/cobra"
 )
 
 // errAborted is returned when the user declines a confirmation prompt. The
