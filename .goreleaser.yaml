@@ -32,8 +32,9 @@ changelog:
   use: github
   sort: asc
   # Show only the change description — no commit hash, no author/email.
+  # GoReleaser adds the "* " bullet itself, so the format is message-only.
   abbrev: -1
-  format: "* {{ .Message }}"
+  format: "{{ .Message }}"
   filters:
     exclude:
       - "^docs:"
