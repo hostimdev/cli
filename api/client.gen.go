@@ -4948,7 +4948,7 @@ func (r UpdateAppResponse) ContentType() string {
 type RemoveDomainResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *string
+	JSON200      *GenericMessage
 	JSON401      *GenericMessage
 	JSON404      *GenericMessage
 	JSON500      *GenericMessage
@@ -4981,7 +4981,7 @@ func (r RemoveDomainResponse) ContentType() string {
 type AddDomainResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *string
+	JSON200      *GenericMessage
 	JSON401      *GenericMessage
 	JSON404      *GenericMessage
 	JSON500      *GenericMessage
@@ -7623,7 +7623,7 @@ func ParseRemoveDomainResponse(rsp *http.Response) (*RemoveDomainResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest string
+		var dest GenericMessage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -7670,7 +7670,7 @@ func ParseAddDomainResponse(rsp *http.Response) (*AddDomainResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest string
+		var dest GenericMessage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
