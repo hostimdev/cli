@@ -109,6 +109,22 @@ func newWhoamiCmd(c *cli) *cobra.Command {
 			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 				return err
 			}
+			n := 0
+			if resp.JSON200 != nil {
+				n = len(*resp.JSON200)
+			}
+			if c.printer.Format == "json" {
+				return c.printer.JSON(struct {
+					APIURL             string `json:"apiUrl"`
+					TokenSource        string `json:"tokenSource"`
+					CurrentProject     string `json:"currentProject"`
+					ProjectSource      string `json:"projectSource"`
+					ProjectsAccessible int    `json:"projectsAccessible"`
+				}{
+					c.resolved.APIURL, c.resolved.TokenSource, c.resolved.Project,
+					c.resolved.ProjectSource, n,
+				})
+			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "API URL:        %s\n", c.resolved.APIURL)
 			fmt.Fprintf(out, "Token source:   %s\n", dash(c.resolved.TokenSource))
@@ -117,21 +133,22 @@ func newWhoamiCmd(c *cli) *cobra.Command {
 				fmt.Fprintf(out, " (%s)", c.resolved.ProjectSource)
 			}
 			fmt.Fprintln(out)
-			if resp.JSON200 != nil {
-				fmt.Fprintf(out, "Projects:       %d accessible\n", len(*resp.JSON200))
-			}
+			fmt.Fprintf(out, "Projects:       %d accessible\n", n)
 			return nil
 		},
 	}
 }
 
-func newUseCmd(_ *cli) *cobra.Command {
+func newUseCmd(c *cli) *cobra.Command {
 	var clear bool
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "use [project]",
 		Short: "Set the default project for resource commands",
 		Long: "Set the default project used by resource commands when no -p/--project\n" +
-			"flag or HOSTIM_PROJECT env var is given. Pass --clear to unset it.",
+			"flag or HOSTIM_PROJECT env var is given. The project is verified to\n" +
+			"exist before it is saved; pass --force to skip that check (offline).\n" +
+			"Pass --clear to unset it.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if clear == (len(args) == 1) {
@@ -149,6 +166,17 @@ func newUseCmd(_ *cli) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "Cleared the default project.")
 				return nil
 			}
+			// Reject a typo'd name up front rather than persisting a default
+			// that every later command would fail on.
+			if !force {
+				a, err := c.Client()
+				if err != nil {
+					return err
+				}
+				if _, err := resolveProjectID(cmd.Context(), a, args[0]); err != nil {
+					return err
+				}
+			}
 			f.CurrentProject = args[0]
 			if err := config.Save(f); err != nil {
 				return err
@@ -158,5 +186,6 @@ func newUseCmd(_ *cli) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&clear, "clear", false, "unset the default project")
+	cmd.Flags().BoolVar(&force, "force", false, "skip verifying the project exists")
 	return cmd
 }

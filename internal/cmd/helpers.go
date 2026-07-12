@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,11 @@ import (
 	"github.com/hostimdev/cli/internal/client"
 	"github.com/spf13/cobra"
 )
+
+// errAborted is returned when the user declines a confirmation prompt. The
+// helper already printed a human-readable "Aborted." line, so root's Execute
+// exits non-zero without prefixing it with "error:".
+var errAborted = errors.New("aborted")
 
 // projectIDPrefix is the prefix of the system-generated project identifiers used
 // as the {projectName} path parameter by the API. Friendly project names are
@@ -97,7 +103,8 @@ func confirmByName(cmd *cobra.Command, kind, name string, skip bool) error {
 			"Type the %s name (%q) to confirm: ", kind, name, kind, name)
 	line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 	if strings.TrimSpace(line) != name {
-		return fmt.Errorf("confirmation did not match %q; aborted", name)
+		fmt.Fprintln(cmd.OutOrStderr(), "Name did not match; aborted.")
+		return errAborted
 	}
 	return nil
 }
@@ -109,7 +116,7 @@ func confirmYesNo(cmd *cobra.Command, prompt string, skip bool) error {
 		return nil
 	}
 	if !isInteractive(cmd) {
-		return fmt.Errorf("%s (re-run with --yes to proceed non-interactively)", prompt)
+		return fmt.Errorf("refusing to proceed in a non-interactive session; re-run with --yes to confirm")
 	}
 	fmt.Fprintf(cmd.OutOrStderr(), "%s [y/N]: ", prompt)
 	line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
@@ -117,7 +124,8 @@ func confirmYesNo(cmd *cobra.Command, prompt string, skip bool) error {
 	case "y", "yes":
 		return nil
 	default:
-		return fmt.Errorf("aborted")
+		fmt.Fprintln(cmd.OutOrStderr(), "Aborted.")
+		return errAborted
 	}
 }
 

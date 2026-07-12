@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -94,7 +95,11 @@ func Execute() {
 	)
 
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		// errAborted's message was already shown by the confirm helper; other
+		// errors get the "error:" prefix.
+		if !errors.Is(err, errAborted) {
+			fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		}
 		os.Exit(1)
 	}
 }

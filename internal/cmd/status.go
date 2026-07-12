@@ -84,7 +84,9 @@ func statusAll(cmd *cobra.Command, c *cli, a *api.ClientWithResponses, project s
 }
 
 func buildStr(s *api.AppStatusBuildStatus) string {
-	if s == nil {
+	// Docker-image apps have no build phase, so the API returns an empty
+	// build status; render it as "-" rather than a blank cell.
+	if s == nil || string(*s) == "" {
 		return "-"
 	}
 	return string(*s)

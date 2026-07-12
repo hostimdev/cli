@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/hostimdev/cli/api"
 	"github.com/spf13/cobra"
@@ -310,7 +311,8 @@ func firstNonError(payload any, st int, body []byte, err error) (any, error) {
 	return payload, nil
 }
 
-// kvRows renders any struct/pointer as sorted FIELD/VALUE rows via JSON.
+// kvRows renders any struct/pointer as sorted FIELD/VALUE rows via JSON, with
+// human-friendly field labels and a formatted monthly cost.
 func kvRows(v any) [][]string {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -327,7 +329,32 @@ func kvRows(v any) [][]string {
 	sort.Strings(keys)
 	rows := make([][]string, 0, len(keys))
 	for _, k := range keys {
-		rows = append(rows, []string{k, fmt.Sprintf("%v", m[k])})
+		label := prettyKey(k)
+		val := fmt.Sprintf("%v", m[k])
+		if k == "cost" {
+			label = "Monthly cost"
+			if f, ok := m[k].(float64); ok {
+				val = eur(float32(f))
+			}
+		}
+		rows = append(rows, []string{label, val})
 	}
 	return rows
+}
+
+// prettyKey turns a JSON field name into a display label: "storageMB" ->
+// "Storage MB", "migrationStatus" -> "Migration Status", "name" -> "Name".
+func prettyKey(k string) string {
+	var b strings.Builder
+	for i, r := range k {
+		if i > 0 && r >= 'A' && r <= 'Z' && k[i-1] >= 'a' && k[i-1] <= 'z' {
+			b.WriteByte(' ')
+		}
+		b.WriteRune(r)
+	}
+	s := b.String()
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
