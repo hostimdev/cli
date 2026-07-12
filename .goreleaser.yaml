@@ -31,11 +31,15 @@ checksum:
 changelog:
   use: github
   sort: asc
+  # Show only the change description — no commit hash, no author/email.
+  abbrev: -1
+  format: "* {{ .Message }}"
   filters:
     exclude:
       - "^docs:"
       - "^test:"
       - "^chore:"
+      - "^ci"
       - "merge conflict"
 
 # Homebrew publishing is deferred until the tap repo + token exist. Add a
