@@ -41,7 +41,8 @@ non-zero if it fails, so it drops straight into a pipeline:
 ```sh
 hostim deploy web \
   --git https://github.com/me/app --branch main \
-  --plan small --port 8080
+  --plan small --port 8080 \
+  --env LOG_LEVEL=debug --env-file .env
 
 # fire-and-forget
 hostim deploy web --docker-image ghcr.io/me/app:latest --no-wait=false

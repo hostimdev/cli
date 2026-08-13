@@ -31,6 +31,8 @@ type deployFlags struct {
 	public   bool
 	domains  []string
 	volumes  []string
+	env      []string
+	envFile  string
 
 	wait     bool
 	timeout  time.Duration
@@ -66,6 +68,8 @@ func newDeployCmd(c *cli) *cobra.Command {
 	fl.BoolVar(&f.public, "public", true, "expose the app publicly (on create)")
 	fl.StringArrayVar(&f.domains, "domain", nil, "custom domain (repeatable, on create)")
 	fl.StringArrayVar(&f.volumes, "volume", nil, "mount a volume as name:mountPath (repeatable)")
+	fl.StringArrayVar(&f.env, "env", nil, "environment variable as KEY=VALUE (repeatable, merges with existing)")
+	fl.StringVar(&f.envFile, "env-file", "", "read environment variables from a .env file (merges with existing)")
 	fl.BoolVar(&f.wait, "wait", true, "wait for the build to finish (use --wait=false for fire-and-forget)")
 	fl.DurationVar(&f.timeout, "timeout", 15*time.Minute, "max time to wait for the build")
 	fl.DurationVar(&f.interval, "poll-interval", 3*time.Second, "status poll interval")
@@ -284,6 +288,19 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 		app.VolumeMounts = mounts
 		changed = true
 	}
+	updates, err := deployEnv(f)
+	if err != nil {
+		return false, err
+	}
+	if len(updates) > 0 {
+		var cur []api.EnvVar
+		if app.EnvVars != nil {
+			cur = *app.EnvVars
+		}
+		merged := mergeVars(cur, updates)
+		app.EnvVars = &merged
+		changed = true
+	}
 
 	if !changed {
 		return false, nil
@@ -329,6 +346,27 @@ func buildNewApp(name string, f *deployFlags) (api.App, error) {
 		return api.App{}, err
 	}
 	return app, nil
+}
+
+// deployEnv collects the env vars given via --env-file and --env, with --env
+// taking precedence over the file.
+func deployEnv(f *deployFlags) ([]api.EnvVar, error) {
+	var out []api.EnvVar
+	if f.envFile != "" {
+		fromFile, err := parseEnvFile(f.envFile)
+		if err != nil {
+			return nil, err
+		}
+		out = fromFile
+	}
+	if len(f.env) > 0 {
+		kv, err := parseKV(f.env)
+		if err != nil {
+			return nil, err
+		}
+		out = mergeVars(out, kv)
+	}
+	return out, nil
 }
 
 // parseVolumeMounts turns "name:/mount/path" flag values into App volume mounts.
