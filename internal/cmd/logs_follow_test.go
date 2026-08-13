@@ -25,14 +25,14 @@ func buildLogServer(t *testing.T, buildStatus string) *httptest.Server {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/logs"):
 			if served {
-				w.Write([]byte(`[]`))
+				_, _ = w.Write([]byte(`[]`))
 				return
 			}
 			served = true
 			ts := strconv.FormatInt(time.Now().UnixNano(), 10)
-			w.Write([]byte(`[{"message":"step 1","timestamp":"` + ts + `","type":"build"}]`))
+			_, _ = w.Write([]byte(`[{"message":"step 1","timestamp":"` + ts + `","type":"build"}]`))
 		case strings.HasSuffix(r.URL.Path, "/status"):
-			w.Write([]byte(`{"buildStatus":"` + buildStatus + `"}`))
+			_, _ = w.Write([]byte(`{"buildStatus":"` + buildStatus + `"}`))
 		default:
 			t.Errorf("unexpected request to %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
