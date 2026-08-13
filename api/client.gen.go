@@ -84,6 +84,7 @@ const (
 	AppStatusRuntimeStatusImagePullBackoff AppStatusRuntimeStatus = "imagePullBackoff"
 	AppStatusRuntimeStatusPending          AppStatusRuntimeStatus = "pending"
 	AppStatusRuntimeStatusRunning          AppStatusRuntimeStatus = "running"
+	AppStatusRuntimeStatusUnhealthy        AppStatusRuntimeStatus = "unhealthy"
 )
 
 // Valid indicates whether the value is a known member of the AppStatusRuntimeStatus enum.
@@ -96,6 +97,29 @@ func (e AppStatusRuntimeStatus) Valid() bool {
 	case AppStatusRuntimeStatusPending:
 		return true
 	case AppStatusRuntimeStatusRunning:
+		return true
+	case AppStatusRuntimeStatusUnhealthy:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LogType.
+const (
+	LogTypeBuild  LogType = "build"
+	LogTypeHttp   LogType = "http"
+	LogTypeStdout LogType = "stdout"
+)
+
+// Valid indicates whether the value is a known member of the LogType enum.
+func (e LogType) Valid() bool {
+	switch e {
+	case LogTypeBuild:
+		return true
+	case LogTypeHttp:
+		return true
+	case LogTypeStdout:
 		return true
 	default:
 		return false
@@ -258,6 +282,24 @@ func (e ProjectAccessLevel) Valid() bool {
 	}
 }
 
+// Defines values for GetAppLogsParamsLogType.
+const (
+	GetAppLogsParamsLogTypeBuild  GetAppLogsParamsLogType = "build"
+	GetAppLogsParamsLogTypeStdout GetAppLogsParamsLogType = "stdout"
+)
+
+// Valid indicates whether the value is a known member of the GetAppLogsParamsLogType enum.
+func (e GetAppLogsParamsLogType) Valid() bool {
+	switch e {
+	case GetAppLogsParamsLogTypeBuild:
+		return true
+	case GetAppLogsParamsLogTypeStdout:
+		return true
+	default:
+		return false
+	}
+}
+
 // App defines model for App.
 type App struct {
 	// BuiltInDomain The built-in domain of the app
@@ -279,7 +321,7 @@ type App struct {
 			// Image The docker image
 			Image string `json:"image"`
 
-			// Password The docker password
+			// Password The docker registry password. Write-only: accepted on create/update but never returned in cleartext on read; read responses return "***" when a password is set. Send "***" back unchanged to keep the stored value.
 			Password *string `json:"password,omitempty"`
 
 			// Registry The docker registry
@@ -297,7 +339,7 @@ type App struct {
 			// Dockerfilepath The path to the dockerfile
 			Dockerfilepath *string `json:"dockerfilepath,omitempty"`
 
-			// Token The git token
+			// Token The git access token for private repos. Write-only: accepted on create/update but never returned in cleartext on read; read responses return "***" when a token is set. Send "***" back unchanged to keep the stored value.
 			Token *string `json:"token,omitempty"`
 
 			// Url The git url
@@ -422,6 +464,21 @@ type GenericMessage struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 }
+
+// Log The log object, used for logs
+type Log struct {
+	// Message The log message
+	Message string `json:"message"`
+
+	// Timestamp The log timestamp (Unix timestamp in nanoseconds)
+	Timestamp string `json:"timestamp"`
+
+	// Type The log type
+	Type LogType `json:"type"`
+}
+
+// LogType The log type
+type LogType string
 
 // MySQL defines model for MySQL.
 type MySQL struct {
@@ -776,6 +833,24 @@ type AddDomainJSONBody = string
 // SetAppEnvJSONBody defines parameters for SetAppEnv.
 type SetAppEnvJSONBody = []EnvVar
 
+// GetAppLogsParams defines parameters for GetAppLogs.
+type GetAppLogsParams struct {
+	// Before The timestamp (nanoseconds) to fetch logs before. If omitted, defaults to Now().
+	Before *string `form:"before,omitempty" json:"before,omitempty"`
+
+	// After Fetch logs newer than this timestamp (for polling). Mutually exclusive with 'before'.
+	After *string `form:"after,omitempty" json:"after,omitempty"`
+
+	// LogType The type of the log
+	LogType GetAppLogsParamsLogType `form:"logType" json:"logType"`
+
+	// Limit Maximum number of logs to return (default 100)
+	Limit int `form:"limit" json:"limit"`
+}
+
+// GetAppLogsParamsLogType defines parameters for GetAppLogs.
+type GetAppLogsParamsLogType string
+
 // SetGlobalEnvJSONBody defines parameters for SetGlobalEnv.
 type SetGlobalEnvJSONBody = []EnvVar
 
@@ -959,6 +1034,9 @@ type ClientInterface interface {
 	SetAppEnvWithBody(ctx context.Context, projectName string, appName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	SetAppEnv(ctx context.Context, projectName string, appName string, body SetAppEnvJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAppLogs request
+	GetAppLogs(ctx context.Context, projectName string, appName string, params *GetAppLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RebuildApp request
 	RebuildApp(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1340,6 +1418,18 @@ func (c *Client) SetAppEnvWithBody(ctx context.Context, projectName string, appN
 
 func (c *Client) SetAppEnv(ctx context.Context, projectName string, appName string, body SetAppEnvJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetAppEnvRequest(c.Server, projectName, appName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetAppLogs(ctx context.Context, projectName string, appName string, params *GetAppLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAppLogsRequest(c.Server, projectName, appName, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2625,6 +2715,102 @@ func NewSetAppEnvRequestWithBody(server string, projectName string, appName stri
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetAppLogsRequest generates requests for GetAppLogs
+func NewGetAppLogsRequest(server string, projectName string, appName string, params *GetAppLogsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "appName", appName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/apps/%s/logs", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Before != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "before", *params.Before, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "logType", params.LogType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -4465,6 +4651,9 @@ type ClientWithResponsesInterface interface {
 
 	SetAppEnvWithResponse(ctx context.Context, projectName string, appName string, body SetAppEnvJSONRequestBody, reqEditors ...RequestEditorFn) (*SetAppEnvResponse, error)
 
+	// GetAppLogsWithResponse request
+	GetAppLogsWithResponse(ctx context.Context, projectName string, appName string, params *GetAppLogsParams, reqEditors ...RequestEditorFn) (*GetAppLogsResponse, error)
+
 	// RebuildAppWithResponse request
 	RebuildAppWithResponse(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*RebuildAppResponse, error)
 
@@ -5071,6 +5260,39 @@ func (r SetAppEnvResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SetAppEnvResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetAppLogsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]Log
+	JSON401      *GenericMessage
+	JSON404      *GenericMessage
+	JSON500      *GenericMessage
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAppLogsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAppLogsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAppLogsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -6671,6 +6893,15 @@ func (c *ClientWithResponses) SetAppEnvWithResponse(ctx context.Context, project
 	return ParseSetAppEnvResponse(rsp)
 }
 
+// GetAppLogsWithResponse request returning *GetAppLogsResponse
+func (c *ClientWithResponses) GetAppLogsWithResponse(ctx context.Context, projectName string, appName string, params *GetAppLogsParams, reqEditors ...RequestEditorFn) (*GetAppLogsResponse, error) {
+	rsp, err := c.GetAppLogs(ctx, projectName, appName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAppLogsResponse(rsp)
+}
+
 // RebuildAppWithResponse request returning *RebuildAppResponse
 func (c *ClientWithResponses) RebuildAppWithResponse(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*RebuildAppResponse, error) {
 	rsp, err := c.RebuildApp(ctx, projectName, appName, reqEditors...)
@@ -7765,6 +7996,53 @@ func ParseSetAppEnvResponse(rsp *http.Response) (*SetAppEnvResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAppLogsResponse parses an HTTP response from a GetAppLogsWithResponse call
+func ParseGetAppLogsResponse(rsp *http.Response) (*GetAppLogsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAppLogsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Log
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
