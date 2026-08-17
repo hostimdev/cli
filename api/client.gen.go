@@ -80,6 +80,7 @@ const (
 	AppStatusRuntimeStatusImagePullBackoff AppStatusRuntimeStatus = "imagePullBackoff"
 	AppStatusRuntimeStatusPending          AppStatusRuntimeStatus = "pending"
 	AppStatusRuntimeStatusRunning          AppStatusRuntimeStatus = "running"
+	AppStatusRuntimeStatusStopped          AppStatusRuntimeStatus = "stopped"
 	AppStatusRuntimeStatusUnhealthy        AppStatusRuntimeStatus = "unhealthy"
 )
 
@@ -93,6 +94,8 @@ func (e AppStatusRuntimeStatus) Valid() bool {
 	case AppStatusRuntimeStatusPending:
 		return true
 	case AppStatusRuntimeStatusRunning:
+		return true
+	case AppStatusRuntimeStatusStopped:
 		return true
 	case AppStatusRuntimeStatusUnhealthy:
 		return true
