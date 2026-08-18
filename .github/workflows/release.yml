@@ -35,7 +35,11 @@ jobs:
         run: |
           set -euo pipefail
           BUMP="${{ github.event.inputs.bump || 'patch' }}"
-          LATEST_TAG=$(git describe --tags --match "v*" --abbrev=0 2>/dev/null || echo "")
+          # Highest existing version tag, not `git describe`: two tags can point
+          # at the same commit (a failed release that was re-run), and describe
+          # then returns the lower one, so the next bump lands on a tag that
+          # already exists and the push fails.
+          LATEST_TAG=$(git tag --list "v*" --sort=-v:refname | head -n 1)
 
           if [ -z "$LATEST_TAG" ]; then
             # First release of a beta CLI.
