@@ -104,6 +104,66 @@ func (e AppStatusRuntimeStatus) Valid() bool {
 	}
 }
 
+// Defines values for EventServiceType.
+const (
+	EventServiceTypeApp      EventServiceType = "app"
+	EventServiceTypeMysql    EventServiceType = "mysql"
+	EventServiceTypePostgres EventServiceType = "postgres"
+	EventServiceTypeRedis    EventServiceType = "redis"
+)
+
+// Valid indicates whether the value is a known member of the EventServiceType enum.
+func (e EventServiceType) Valid() bool {
+	switch e {
+	case EventServiceTypeApp:
+		return true
+	case EventServiceTypeMysql:
+		return true
+	case EventServiceTypePostgres:
+		return true
+	case EventServiceTypeRedis:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EventSource.
+const (
+	Admin EventSource = "admin"
+	Infra EventSource = "infra"
+)
+
+// Valid indicates whether the value is a known member of the EventSource enum.
+func (e EventSource) Valid() bool {
+	switch e {
+	case Admin:
+		return true
+	case Infra:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EventType.
+const (
+	Normal  EventType = "Normal"
+	Warning EventType = "Warning"
+)
+
+// Valid indicates whether the value is a known member of the EventType enum.
+func (e EventType) Valid() bool {
+	switch e {
+	case Normal:
+		return true
+	case Warning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for LogType.
 const (
 	LogTypeBuild  LogType = "build"
@@ -457,6 +517,42 @@ type EnvVar struct {
 	// Value The env var value
 	Value string `json:"value"`
 }
+
+// Event defines model for Event.
+type Event struct {
+	// Message A human-readable message describing the event
+	Message string `json:"message"`
+
+	// Project The project this event belongs to
+	Project string `json:"project"`
+
+	// Reason A short, machine-understandable reason for the event
+	Reason string `json:"reason"`
+
+	// ServiceName Name of the service/app/database this event is related to
+	ServiceName *string `json:"serviceName,omitempty"`
+
+	// ServiceType The type of resource this event is about (e.g. app, mysql, postgres, redis)
+	ServiceType *EventServiceType `json:"serviceType,omitempty"`
+
+	// Source The origin of the event
+	Source EventSource `json:"source"`
+
+	// Timestamp When the event occurred
+	Timestamp time.Time `json:"timestamp"`
+
+	// Type The Kubernetes event type
+	Type EventType `json:"type"`
+}
+
+// EventServiceType The type of resource this event is about (e.g. app, mysql, postgres, redis)
+type EventServiceType string
+
+// EventSource The origin of the event
+type EventSource string
+
+// EventType The Kubernetes event type
+type EventType string
 
 // GenericMessage defines model for GenericMessage.
 type GenericMessage struct {
@@ -829,6 +925,12 @@ type AddDomainJSONBody = string
 // SetAppEnvJSONBody defines parameters for SetAppEnv.
 type SetAppEnvJSONBody = []EnvVar
 
+// GetAppEventsParams defines parameters for GetAppEvents.
+type GetAppEventsParams struct {
+	// Limit Maximum number of events to return, most recent first (default 100, max 1000)
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // GetAppLogsParams defines parameters for GetAppLogs.
 type GetAppLogsParams struct {
 	// Before The timestamp (nanoseconds) to fetch logs before. If omitted, defaults to Now().
@@ -846,6 +948,12 @@ type GetAppLogsParams struct {
 
 // GetAppLogsParamsLogType defines parameters for GetAppLogs.
 type GetAppLogsParamsLogType string
+
+// GetProjectEventsParams defines parameters for GetProjectEvents.
+type GetProjectEventsParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
 
 // SetGlobalEnvJSONBody defines parameters for SetGlobalEnv.
 type SetGlobalEnvJSONBody = []EnvVar
@@ -1114,6 +1222,18 @@ type ClientInterface interface {
 	// Corresponds with PUT /api/projects/{projectName}/apps/{appName}/env (the `SetAppEnv` operationId).
 	SetAppEnv(ctx context.Context, projectName string, appName string, body SetAppEnvJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetAppEvents Get app events
+	//
+	// Corresponds with GET /api/projects/{projectName}/apps/{appName}/events (the `GetAppEvents` operationId).
+	GetAppEvents(ctx context.Context, projectName string, appName string, params *GetAppEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StreamAppEvents Get app events stream
+	//
+	// Establishes a stream of events for a given app.
+	//
+	// Corresponds with GET /api/projects/{projectName}/apps/{appName}/events/stream (the `StreamAppEvents` operationId).
+	StreamAppEvents(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetAppLogs Get app logs
 	//
 	// Get app logs with cursor-based pagination (infinite scroll).
@@ -1135,6 +1255,18 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/projects/{projectName}/apps/{appName}/status (the `GetAppStatus` operationId).
 	GetAppStatus(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetProjectEvents Get project events
+	//
+	// Corresponds with GET /api/projects/{projectName}/events (the `GetProjectEvents` operationId).
+	GetProjectEvents(ctx context.Context, projectName string, params *GetProjectEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StreamProjectEvents Get project events stream
+	//
+	// Establishes a stream of events for a given project.
+	//
+	// Corresponds with GET /api/projects/{projectName}/events/stream (the `StreamProjectEvents` operationId).
+	StreamProjectEvents(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetGlobalEnv Get global environment variables
 	//
@@ -1210,6 +1342,18 @@ type ClientInterface interface {
 	// Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/env (the `GetMysqlEnv` operationId).
 	GetMysqlEnv(ctx context.Context, projectName string, mysqlName string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetMySQLEvents Get mysql events
+	//
+	// Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/events (the `GetMySQLEvents` operationId).
+	GetMySQLEvents(ctx context.Context, projectName string, mysqlName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StreamMySQLEvents Get mysql events stream
+	//
+	// Establishes a stream of events for a given mysql.
+	//
+	// Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/events/stream (the `StreamMySQLEvents` operationId).
+	StreamMySQLEvents(ctx context.Context, projectName string, mysqlName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetMysqlStatus Get mysql status
 	//
 	// Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/status (the `GetMysqlStatus` operationId).
@@ -1270,10 +1414,34 @@ type ClientInterface interface {
 	// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/env (the `GetPostgresEnv` operationId).
 	GetPostgresEnv(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetPostgresEvents Get postgres events
+	//
+	// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/events (the `GetPostgresEvents` operationId).
+	GetPostgresEvents(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StreamPostgresEvents Get postgres events stream
+	//
+	// Establishes a stream of events for a given postgres.
+	//
+	// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/events/stream (the `StreamPostgresEvents` operationId).
+	StreamPostgresEvents(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetPostgresStatus Get postgres status
 	//
 	// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/status (the `GetPostgresStatus` operationId).
 	GetPostgresStatus(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRedisEvents Get redis events
+	//
+	// Corresponds with GET /api/projects/{projectName}/redis/{redisName}/events (the `GetRedisEvents` operationId).
+	GetRedisEvents(ctx context.Context, projectName string, redisName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StreamRedisEvents Get redis events stream
+	//
+	// Establishes a stream of events for a given redis.
+	//
+	// Corresponds with GET /api/projects/{projectName}/redis/{redisName}/events/stream (the `StreamRedisEvents` operationId).
+	StreamRedisEvents(ctx context.Context, projectName string, redisName string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetRedises Get redises
 	//
@@ -1781,6 +1949,38 @@ func (c *Client) SetAppEnv(ctx context.Context, projectName string, appName stri
 	return c.Client.Do(req)
 }
 
+// GetAppEvents Get app events
+//
+// Corresponds with GET /api/projects/{projectName}/apps/{appName}/events (the `GetAppEvents` operationId).
+func (c *Client) GetAppEvents(ctx context.Context, projectName string, appName string, params *GetAppEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAppEventsRequest(c.Server, projectName, appName, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StreamAppEvents Get app events stream
+//
+// Establishes a stream of events for a given app.
+//
+// Corresponds with GET /api/projects/{projectName}/apps/{appName}/events/stream (the `StreamAppEvents` operationId).
+func (c *Client) StreamAppEvents(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamAppEventsRequest(c.Server, projectName, appName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetAppLogs Get app logs
 //
 // Get app logs with cursor-based pagination (infinite scroll).
@@ -1833,6 +2033,38 @@ func (c *Client) RestartApp(ctx context.Context, projectName string, appName str
 // Corresponds with GET /api/projects/{projectName}/apps/{appName}/status (the `GetAppStatus` operationId).
 func (c *Client) GetAppStatus(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAppStatusRequest(c.Server, projectName, appName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetProjectEvents Get project events
+//
+// Corresponds with GET /api/projects/{projectName}/events (the `GetProjectEvents` operationId).
+func (c *Client) GetProjectEvents(ctx context.Context, projectName string, params *GetProjectEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetProjectEventsRequest(c.Server, projectName, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StreamProjectEvents Get project events stream
+//
+// Establishes a stream of events for a given project.
+//
+// Corresponds with GET /api/projects/{projectName}/events/stream (the `StreamProjectEvents` operationId).
+func (c *Client) StreamProjectEvents(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamProjectEventsRequest(c.Server, projectName)
 	if err != nil {
 		return nil, err
 	}
@@ -2037,6 +2269,38 @@ func (c *Client) GetMysqlEnv(ctx context.Context, projectName string, mysqlName 
 	return c.Client.Do(req)
 }
 
+// GetMySQLEvents Get mysql events
+//
+// Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/events (the `GetMySQLEvents` operationId).
+func (c *Client) GetMySQLEvents(ctx context.Context, projectName string, mysqlName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetMySQLEventsRequest(c.Server, projectName, mysqlName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StreamMySQLEvents Get mysql events stream
+//
+// Establishes a stream of events for a given mysql.
+//
+// Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/events/stream (the `StreamMySQLEvents` operationId).
+func (c *Client) StreamMySQLEvents(ctx context.Context, projectName string, mysqlName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamMySQLEventsRequest(c.Server, projectName, mysqlName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetMysqlStatus Get mysql status
 //
 // Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/status (the `GetMysqlStatus` operationId).
@@ -2197,11 +2461,75 @@ func (c *Client) GetPostgresEnv(ctx context.Context, projectName string, postgre
 	return c.Client.Do(req)
 }
 
+// GetPostgresEvents Get postgres events
+//
+// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/events (the `GetPostgresEvents` operationId).
+func (c *Client) GetPostgresEvents(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPostgresEventsRequest(c.Server, projectName, postgresName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StreamPostgresEvents Get postgres events stream
+//
+// Establishes a stream of events for a given postgres.
+//
+// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/events/stream (the `StreamPostgresEvents` operationId).
+func (c *Client) StreamPostgresEvents(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamPostgresEventsRequest(c.Server, projectName, postgresName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetPostgresStatus Get postgres status
 //
 // Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/status (the `GetPostgresStatus` operationId).
 func (c *Client) GetPostgresStatus(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPostgresStatusRequest(c.Server, projectName, postgresName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRedisEvents Get redis events
+//
+// Corresponds with GET /api/projects/{projectName}/redis/{redisName}/events (the `GetRedisEvents` operationId).
+func (c *Client) GetRedisEvents(ctx context.Context, projectName string, redisName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRedisEventsRequest(c.Server, projectName, redisName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StreamRedisEvents Get redis events stream
+//
+// Establishes a stream of events for a given redis.
+//
+// Corresponds with GET /api/projects/{projectName}/redis/{redisName}/events/stream (the `StreamRedisEvents` operationId).
+func (c *Client) StreamRedisEvents(ctx context.Context, projectName string, redisName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamRedisEventsRequest(c.Server, projectName, redisName)
 	if err != nil {
 		return nil, err
 	}
@@ -3294,6 +3622,115 @@ func NewSetAppEnvRequestWithBody(server string, projectName string, appName stri
 	return req, nil
 }
 
+// NewGetAppEventsRequest constructs an http.Request for the GetAppEvents method
+func NewGetAppEventsRequest(server string, projectName string, appName string, params *GetAppEventsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "appName", appName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/apps/%s/events", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStreamAppEventsRequest constructs an http.Request for the StreamAppEvents method
+func NewStreamAppEventsRequest(server string, projectName string, appName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "appName", appName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/apps/%s/events/stream", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetAppLogsRequest constructs an http.Request for the GetAppLogs method
 func NewGetAppLogsRequest(server string, projectName string, appName string, params *GetAppLogsParams) (*http.Request, error) {
 	var err error
@@ -3496,6 +3933,113 @@ func NewGetAppStatusRequest(server string, projectName string, appName string) (
 	}
 
 	operationPath := fmt.Sprintf("/api/projects/%s/apps/%s/status", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetProjectEventsRequest constructs an http.Request for the GetProjectEvents method
+func NewGetProjectEventsRequest(server string, projectName string, params *GetProjectEventsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/events", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStreamProjectEventsRequest constructs an http.Request for the StreamProjectEvents method
+func NewStreamProjectEventsRequest(server string, projectName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/events/stream", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -3893,6 +4437,88 @@ func NewGetMysqlEnvRequest(server string, projectName string, mysqlName string) 
 	return req, nil
 }
 
+// NewGetMySQLEventsRequest constructs an http.Request for the GetMySQLEvents method
+func NewGetMySQLEventsRequest(server string, projectName string, mysqlName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "mysqlName", mysqlName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/mysqls/%s/events", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStreamMySQLEventsRequest constructs an http.Request for the StreamMySQLEvents method
+func NewStreamMySQLEventsRequest(server string, projectName string, mysqlName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "mysqlName", mysqlName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/mysqls/%s/events/stream", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetMysqlStatusRequest constructs an http.Request for the GetMysqlStatus method
 func NewGetMysqlStatusRequest(server string, projectName string, mysqlName string) (*http.Request, error) {
 	var err error
@@ -4233,6 +4859,88 @@ func NewGetPostgresEnvRequest(server string, projectName string, postgresName st
 	return req, nil
 }
 
+// NewGetPostgresEventsRequest constructs an http.Request for the GetPostgresEvents method
+func NewGetPostgresEventsRequest(server string, projectName string, postgresName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "postgresName", postgresName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/postgres/%s/events", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStreamPostgresEventsRequest constructs an http.Request for the StreamPostgresEvents method
+func NewStreamPostgresEventsRequest(server string, projectName string, postgresName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "postgresName", postgresName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/postgres/%s/events/stream", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetPostgresStatusRequest constructs an http.Request for the GetPostgresStatus method
 func NewGetPostgresStatusRequest(server string, projectName string, postgresName string) (*http.Request, error) {
 	var err error
@@ -4257,6 +4965,88 @@ func NewGetPostgresStatusRequest(server string, projectName string, postgresName
 	}
 
 	operationPath := fmt.Sprintf("/api/projects/%s/postgres/%s/status", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetRedisEventsRequest constructs an http.Request for the GetRedisEvents method
+func NewGetRedisEventsRequest(server string, projectName string, redisName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "redisName", redisName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/redis/%s/events", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStreamRedisEventsRequest constructs an http.Request for the StreamRedisEvents method
+func NewStreamRedisEventsRequest(server string, projectName string, redisName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "redisName", redisName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/redis/%s/events/stream", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -5325,6 +6115,22 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /api/projects/{projectName}/apps/{appName}/env (the `SetAppEnv` operationId).
 	SetAppEnvWithResponse(ctx context.Context, projectName string, appName string, body SetAppEnvJSONRequestBody, reqEditors ...RequestEditorFn) (*SetAppEnvResponse, error)
 
+	// GetAppEventsWithResponse Get app events
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/apps/{appName}/events (the `GetAppEvents` operationId).
+	GetAppEventsWithResponse(ctx context.Context, projectName string, appName string, params *GetAppEventsParams, reqEditors ...RequestEditorFn) (*GetAppEventsResponse, error)
+
+	// StreamAppEventsWithResponse Get app events stream
+	//
+	// Establishes a stream of events for a given app.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/apps/{appName}/events/stream (the `StreamAppEvents` operationId).
+	StreamAppEventsWithResponse(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*StreamAppEventsResponse, error)
+
 	// GetAppLogsWithResponse Get app logs
 	//
 	// Get app logs with cursor-based pagination (infinite scroll).
@@ -5354,6 +6160,22 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/projects/{projectName}/apps/{appName}/status (the `GetAppStatus` operationId).
 	GetAppStatusWithResponse(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*GetAppStatusResponse, error)
+
+	// GetProjectEventsWithResponse Get project events
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/events (the `GetProjectEvents` operationId).
+	GetProjectEventsWithResponse(ctx context.Context, projectName string, params *GetProjectEventsParams, reqEditors ...RequestEditorFn) (*GetProjectEventsResponse, error)
+
+	// StreamProjectEventsWithResponse Get project events stream
+	//
+	// Establishes a stream of events for a given project.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/events/stream (the `StreamProjectEvents` operationId).
+	StreamProjectEventsWithResponse(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*StreamProjectEventsResponse, error)
 
 	// GetGlobalEnvWithResponse Get global environment variables
 	//
@@ -5441,6 +6263,22 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/env (the `GetMysqlEnv` operationId).
 	GetMysqlEnvWithResponse(ctx context.Context, projectName string, mysqlName string, reqEditors ...RequestEditorFn) (*GetMysqlEnvResponse, error)
 
+	// GetMySQLEventsWithResponse Get mysql events
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/events (the `GetMySQLEvents` operationId).
+	GetMySQLEventsWithResponse(ctx context.Context, projectName string, mysqlName string, reqEditors ...RequestEditorFn) (*GetMySQLEventsResponse, error)
+
+	// StreamMySQLEventsWithResponse Get mysql events stream
+	//
+	// Establishes a stream of events for a given mysql.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/events/stream (the `StreamMySQLEvents` operationId).
+	StreamMySQLEventsWithResponse(ctx context.Context, projectName string, mysqlName string, reqEditors ...RequestEditorFn) (*StreamMySQLEventsResponse, error)
+
 	// GetMysqlStatusWithResponse Get mysql status
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -5513,12 +6351,44 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/env (the `GetPostgresEnv` operationId).
 	GetPostgresEnvWithResponse(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*GetPostgresEnvResponse, error)
 
+	// GetPostgresEventsWithResponse Get postgres events
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/events (the `GetPostgresEvents` operationId).
+	GetPostgresEventsWithResponse(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*GetPostgresEventsResponse, error)
+
+	// StreamPostgresEventsWithResponse Get postgres events stream
+	//
+	// Establishes a stream of events for a given postgres.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/events/stream (the `StreamPostgresEvents` operationId).
+	StreamPostgresEventsWithResponse(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*StreamPostgresEventsResponse, error)
+
 	// GetPostgresStatusWithResponse Get postgres status
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/status (the `GetPostgresStatus` operationId).
 	GetPostgresStatusWithResponse(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*GetPostgresStatusResponse, error)
+
+	// GetRedisEventsWithResponse Get redis events
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/redis/{redisName}/events (the `GetRedisEvents` operationId).
+	GetRedisEventsWithResponse(ctx context.Context, projectName string, redisName string, reqEditors ...RequestEditorFn) (*GetRedisEventsResponse, error)
+
+	// StreamRedisEventsWithResponse Get redis events stream
+	//
+	// Establishes a stream of events for a given redis.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/redis/{redisName}/events/stream (the `StreamRedisEvents` operationId).
+	StreamRedisEventsWithResponse(ctx context.Context, projectName string, redisName string, reqEditors ...RequestEditorFn) (*StreamRedisEventsResponse, error)
 
 	// GetRedisesWithResponse Get redises
 	//
@@ -6592,6 +7462,130 @@ func (r SetAppEnvResponse) ContentType() string {
 	return ""
 }
 
+type GetAppEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Event
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAppEventsResponse) GetJSON200() *[]Event {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAppEventsResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetAppEventsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAppEventsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAppEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAppEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAppEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAppEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StreamAppEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Event
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StreamAppEventsResponse) GetJSON200() *[]Event {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StreamAppEventsResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StreamAppEventsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StreamAppEventsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StreamAppEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StreamAppEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StreamAppEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StreamAppEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetAppLogsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6834,6 +7828,136 @@ func (r GetAppStatusResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAppStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetProjectEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *struct {
+		Data  *[]Event `json:"data,omitempty"`
+		Total *int     `json:"total,omitempty"`
+	}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetProjectEventsResponse) GetJSON200() *struct {
+	Data  *[]Event `json:"data,omitempty"`
+	Total *int     `json:"total,omitempty"`
+} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetProjectEventsResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetProjectEventsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetProjectEventsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetProjectEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetProjectEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetProjectEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetProjectEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StreamProjectEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Event
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StreamProjectEventsResponse) GetJSON200() *[]Event {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StreamProjectEventsResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StreamProjectEventsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StreamProjectEventsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StreamProjectEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StreamProjectEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StreamProjectEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StreamProjectEventsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -7398,6 +8522,130 @@ func (r GetMysqlEnvResponse) ContentType() string {
 	return ""
 }
 
+type GetMySQLEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Event
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetMySQLEventsResponse) GetJSON200() *[]Event {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetMySQLEventsResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetMySQLEventsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetMySQLEventsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetMySQLEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetMySQLEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetMySQLEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetMySQLEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StreamMySQLEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Event
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StreamMySQLEventsResponse) GetJSON200() *[]Event {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StreamMySQLEventsResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StreamMySQLEventsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StreamMySQLEventsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StreamMySQLEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StreamMySQLEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StreamMySQLEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StreamMySQLEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetMysqlStatusResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7894,6 +9142,130 @@ func (r GetPostgresEnvResponse) ContentType() string {
 	return ""
 }
 
+type GetPostgresEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Event
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPostgresEventsResponse) GetJSON200() *[]Event {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetPostgresEventsResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetPostgresEventsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetPostgresEventsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPostgresEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPostgresEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPostgresEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPostgresEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StreamPostgresEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Event
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StreamPostgresEventsResponse) GetJSON200() *[]Event {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StreamPostgresEventsResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StreamPostgresEventsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StreamPostgresEventsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StreamPostgresEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StreamPostgresEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StreamPostgresEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StreamPostgresEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetPostgresStatusResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7950,6 +9322,130 @@ func (r GetPostgresStatusResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetPostgresStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetRedisEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Event
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRedisEventsResponse) GetJSON200() *[]Event {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetRedisEventsResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetRedisEventsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetRedisEventsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRedisEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRedisEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRedisEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRedisEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StreamRedisEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Event
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StreamRedisEventsResponse) GetJSON200() *[]Event {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StreamRedisEventsResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StreamRedisEventsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StreamRedisEventsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StreamRedisEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StreamRedisEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StreamRedisEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StreamRedisEventsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -9599,6 +11095,34 @@ func (c *ClientWithResponses) SetAppEnvWithResponse(ctx context.Context, project
 	return ParseSetAppEnvResponse(rsp)
 }
 
+// GetAppEventsWithResponse Get app events
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/apps/{appName}/events (the `GetAppEvents` operationId).
+func (c *ClientWithResponses) GetAppEventsWithResponse(ctx context.Context, projectName string, appName string, params *GetAppEventsParams, reqEditors ...RequestEditorFn) (*GetAppEventsResponse, error) {
+	rsp, err := c.GetAppEvents(ctx, projectName, appName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAppEventsResponse(rsp)
+}
+
+// StreamAppEventsWithResponse Get app events stream
+//
+// Establishes a stream of events for a given app.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/apps/{appName}/events/stream (the `StreamAppEvents` operationId).
+func (c *ClientWithResponses) StreamAppEventsWithResponse(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*StreamAppEventsResponse, error) {
+	rsp, err := c.StreamAppEvents(ctx, projectName, appName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamAppEventsResponse(rsp)
+}
+
 // GetAppLogsWithResponse Get app logs
 //
 // Get app logs with cursor-based pagination (infinite scroll).
@@ -9651,6 +11175,34 @@ func (c *ClientWithResponses) GetAppStatusWithResponse(ctx context.Context, proj
 		return nil, err
 	}
 	return ParseGetAppStatusResponse(rsp)
+}
+
+// GetProjectEventsWithResponse Get project events
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/events (the `GetProjectEvents` operationId).
+func (c *ClientWithResponses) GetProjectEventsWithResponse(ctx context.Context, projectName string, params *GetProjectEventsParams, reqEditors ...RequestEditorFn) (*GetProjectEventsResponse, error) {
+	rsp, err := c.GetProjectEvents(ctx, projectName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetProjectEventsResponse(rsp)
+}
+
+// StreamProjectEventsWithResponse Get project events stream
+//
+// Establishes a stream of events for a given project.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/events/stream (the `StreamProjectEvents` operationId).
+func (c *ClientWithResponses) StreamProjectEventsWithResponse(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*StreamProjectEventsResponse, error) {
+	rsp, err := c.StreamProjectEvents(ctx, projectName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamProjectEventsResponse(rsp)
 }
 
 // GetGlobalEnvWithResponse Get global environment variables
@@ -9811,6 +11363,34 @@ func (c *ClientWithResponses) GetMysqlEnvWithResponse(ctx context.Context, proje
 	return ParseGetMysqlEnvResponse(rsp)
 }
 
+// GetMySQLEventsWithResponse Get mysql events
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/events (the `GetMySQLEvents` operationId).
+func (c *ClientWithResponses) GetMySQLEventsWithResponse(ctx context.Context, projectName string, mysqlName string, reqEditors ...RequestEditorFn) (*GetMySQLEventsResponse, error) {
+	rsp, err := c.GetMySQLEvents(ctx, projectName, mysqlName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetMySQLEventsResponse(rsp)
+}
+
+// StreamMySQLEventsWithResponse Get mysql events stream
+//
+// Establishes a stream of events for a given mysql.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/mysqls/{mysqlName}/events/stream (the `StreamMySQLEvents` operationId).
+func (c *ClientWithResponses) StreamMySQLEventsWithResponse(ctx context.Context, projectName string, mysqlName string, reqEditors ...RequestEditorFn) (*StreamMySQLEventsResponse, error) {
+	rsp, err := c.StreamMySQLEvents(ctx, projectName, mysqlName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamMySQLEventsResponse(rsp)
+}
+
 // GetMysqlStatusWithResponse Get mysql status
 //
 // Returns a wrapper object for the known response body format(s).
@@ -9943,6 +11523,34 @@ func (c *ClientWithResponses) GetPostgresEnvWithResponse(ctx context.Context, pr
 	return ParseGetPostgresEnvResponse(rsp)
 }
 
+// GetPostgresEventsWithResponse Get postgres events
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/events (the `GetPostgresEvents` operationId).
+func (c *ClientWithResponses) GetPostgresEventsWithResponse(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*GetPostgresEventsResponse, error) {
+	rsp, err := c.GetPostgresEvents(ctx, projectName, postgresName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPostgresEventsResponse(rsp)
+}
+
+// StreamPostgresEventsWithResponse Get postgres events stream
+//
+// Establishes a stream of events for a given postgres.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/postgres/{postgresName}/events/stream (the `StreamPostgresEvents` operationId).
+func (c *ClientWithResponses) StreamPostgresEventsWithResponse(ctx context.Context, projectName string, postgresName string, reqEditors ...RequestEditorFn) (*StreamPostgresEventsResponse, error) {
+	rsp, err := c.StreamPostgresEvents(ctx, projectName, postgresName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamPostgresEventsResponse(rsp)
+}
+
 // GetPostgresStatusWithResponse Get postgres status
 //
 // Returns a wrapper object for the known response body format(s).
@@ -9954,6 +11562,34 @@ func (c *ClientWithResponses) GetPostgresStatusWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseGetPostgresStatusResponse(rsp)
+}
+
+// GetRedisEventsWithResponse Get redis events
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/redis/{redisName}/events (the `GetRedisEvents` operationId).
+func (c *ClientWithResponses) GetRedisEventsWithResponse(ctx context.Context, projectName string, redisName string, reqEditors ...RequestEditorFn) (*GetRedisEventsResponse, error) {
+	rsp, err := c.GetRedisEvents(ctx, projectName, redisName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRedisEventsResponse(rsp)
+}
+
+// StreamRedisEventsWithResponse Get redis events stream
+//
+// Establishes a stream of events for a given redis.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/redis/{redisName}/events/stream (the `StreamRedisEvents` operationId).
+func (c *ClientWithResponses) StreamRedisEventsWithResponse(ctx context.Context, projectName string, redisName string, reqEditors ...RequestEditorFn) (*StreamRedisEventsResponse, error) {
+	rsp, err := c.StreamRedisEvents(ctx, projectName, redisName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamRedisEventsResponse(rsp)
 }
 
 // GetRedisesWithResponse Get redises
@@ -10979,6 +12615,100 @@ func ParseSetAppEnvResponse(rsp *http.Response) (*SetAppEnvResponse, error) {
 	return response, nil
 }
 
+// ParseGetAppEventsResponse parses an HTTP response from a GetAppEventsWithResponse call
+func ParseGetAppEventsResponse(rsp *http.Response) (*GetAppEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAppEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Event
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStreamAppEventsResponse parses an HTTP response from a StreamAppEventsWithResponse call
+func ParseStreamAppEventsResponse(rsp *http.Response) (*StreamAppEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StreamAppEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Event
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetAppLogsResponse parses an HTTP response from a GetAppLogsWithResponse call
 func ParseGetAppLogsResponse(rsp *http.Response) (*GetAppLogsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -11136,6 +12866,103 @@ func ParseGetAppStatusResponse(rsp *http.Response) (*GetAppStatusResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest AppStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetProjectEventsResponse parses an HTTP response from a GetProjectEventsWithResponse call
+func ParseGetProjectEventsResponse(rsp *http.Response) (*GetProjectEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetProjectEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data  *[]Event `json:"data,omitempty"`
+			Total *int     `json:"total,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStreamProjectEventsResponse parses an HTTP response from a StreamProjectEventsWithResponse call
+func ParseStreamProjectEventsResponse(rsp *http.Response) (*StreamProjectEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StreamProjectEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Event
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -11590,6 +13417,100 @@ func ParseGetMysqlEnvResponse(rsp *http.Response) (*GetMysqlEnvResponse, error) 
 	return response, nil
 }
 
+// ParseGetMySQLEventsResponse parses an HTTP response from a GetMySQLEventsWithResponse call
+func ParseGetMySQLEventsResponse(rsp *http.Response) (*GetMySQLEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetMySQLEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Event
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStreamMySQLEventsResponse parses an HTTP response from a StreamMySQLEventsWithResponse call
+func ParseStreamMySQLEventsResponse(rsp *http.Response) (*StreamMySQLEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StreamMySQLEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Event
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetMysqlStatusResponse parses an HTTP response from a GetMysqlStatusWithResponse call
 func ParseGetMysqlStatusResponse(rsp *http.Response) (*GetMysqlStatusResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -11966,6 +13887,100 @@ func ParseGetPostgresEnvResponse(rsp *http.Response) (*GetPostgresEnvResponse, e
 	return response, nil
 }
 
+// ParseGetPostgresEventsResponse parses an HTTP response from a GetPostgresEventsWithResponse call
+func ParseGetPostgresEventsResponse(rsp *http.Response) (*GetPostgresEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPostgresEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Event
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStreamPostgresEventsResponse parses an HTTP response from a StreamPostgresEventsWithResponse call
+func ParseStreamPostgresEventsResponse(rsp *http.Response) (*StreamPostgresEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StreamPostgresEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Event
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetPostgresStatusResponse parses an HTTP response from a GetPostgresStatusWithResponse call
 func ParseGetPostgresStatusResponse(rsp *http.Response) (*GetPostgresStatusResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -11982,6 +13997,100 @@ func ParseGetPostgresStatusResponse(rsp *http.Response) (*GetPostgresStatusRespo
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest PostgresStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetRedisEventsResponse parses an HTTP response from a GetRedisEventsWithResponse call
+func ParseGetRedisEventsResponse(rsp *http.Response) (*GetRedisEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRedisEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Event
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStreamRedisEventsResponse parses an HTTP response from a StreamRedisEventsWithResponse call
+func ParseStreamRedisEventsResponse(rsp *http.Response) (*StreamRedisEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StreamRedisEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Event
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

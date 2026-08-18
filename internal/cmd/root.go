@@ -85,6 +85,7 @@ func Execute() {
 		newTemplatesCmd(c),
 		newStatusCmd(c),
 		newLogsCmd(c),
+		newEventsCmd(c),
 		newOverviewCmd(c),
 		newProjectsCmd(c),
 		newAppsCmd(c),

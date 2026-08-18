@@ -47,3 +47,36 @@ func TestApplySourceEnv(t *testing.T) {
 		t.Errorf("got %d vars, want %d", len(got), len(want))
 	}
 }
+
+// The three states of --health-check-path/--command: unset leaves the field
+// alone, set writes it, set-to-empty clears it.
+func TestApplySourceHealthCheckAndCommand(t *testing.T) {
+	hcp, cmdOverride := "/old", "old-cmd"
+
+	app := api.App{HealthCheckPath: &hcp, CommandOverride: &cmdOverride}
+	if changed, err := applySource(&app, &deployFlags{}); err != nil || changed {
+		t.Fatalf("unset flags: changed=%v err=%v", changed, err)
+	}
+	if str(app.HealthCheckPath) != "/old" || str(app.CommandOverride) != "old-cmd" {
+		t.Errorf("unset flags modified the app: %q %q", str(app.HealthCheckPath), str(app.CommandOverride))
+	}
+
+	f := &deployFlags{healthCheckPath: "/new", healthCheckPathSet: true}
+	if changed, err := applySource(&app, f); err != nil || !changed {
+		t.Fatalf("set flag: changed=%v err=%v", changed, err)
+	}
+	if str(app.HealthCheckPath) != "/new" {
+		t.Errorf("healthCheckPath = %q, want /new", str(app.HealthCheckPath))
+	}
+	if str(app.CommandOverride) != "old-cmd" {
+		t.Errorf("commandOverride = %q, want it untouched", str(app.CommandOverride))
+	}
+
+	f = &deployFlags{healthCheckPathSet: true, commandSet: true}
+	if changed, err := applySource(&app, f); err != nil || !changed {
+		t.Fatalf("empty flag: changed=%v err=%v", changed, err)
+	}
+	if str(app.HealthCheckPath) != "" || str(app.CommandOverride) != "" {
+		t.Errorf("expected both cleared, got %q %q", str(app.HealthCheckPath), str(app.CommandOverride))
+	}
+}

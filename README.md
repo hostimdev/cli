@@ -42,6 +42,7 @@ non-zero if it fails, so it drops straight into a pipeline:
 hostim deploy web \
   --git https://github.com/me/app --branch main \
   --plan small --port 8080 \
+  --health-check-path /healthz \
   --env LOG_LEVEL=debug --env-file .env
 
 # fire-and-forget
@@ -55,6 +56,8 @@ hostim apps ls | get <app> | rebuild <app> | restart <app> | rm <app>
 hostim logs web                               # last 100 lines, oldest first
 hostim logs web -f                            # stream
 hostim logs web --build --since 15m -n 500    # build logs from the last 15m
+hostim events web                             # status history: why it went unhealthy
+hostim events web -f                          # keep printing new events
 hostim env set KEY=VALUE --app web            # or --global
 hostim env pull --app web --file .env
 hostim env push --app web --file .env

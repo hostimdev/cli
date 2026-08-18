@@ -34,6 +34,14 @@ type deployFlags struct {
 	env      []string
 	envFile  string
 
+	healthCheckPath string
+	command         string
+	// *Set records whether the flag was given at all, so an explicit empty
+	// value ("--health-check-path=") clears the field instead of being
+	// indistinguishable from "not passed".
+	healthCheckPathSet bool
+	commandSet         bool
+
 	wait     bool
 	timeout  time.Duration
 	interval time.Duration
@@ -50,6 +58,8 @@ func newDeployCmd(c *cli) *cobra.Command {
 			"making it safe to use in CI pipelines.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			f.healthCheckPathSet = cmd.Flags().Changed("health-check-path")
+			f.commandSet = cmd.Flags().Changed("command")
 			return runDeploy(cmd, c, args[0], f)
 		},
 	}
@@ -69,6 +79,8 @@ func newDeployCmd(c *cli) *cobra.Command {
 	fl.StringArrayVar(&f.domains, "domain", nil, "custom domain (repeatable, on create)")
 	fl.StringArrayVar(&f.volumes, "volume", nil, "mount a volume as name:mountPath (repeatable)")
 	fl.StringArrayVar(&f.env, "env", nil, "environment variable as KEY=VALUE (repeatable, merges with existing)")
+	fl.StringVar(&f.healthCheckPath, "health-check-path", "", "HTTP path for the readiness probe (empty value disables it)")
+	fl.StringVar(&f.command, "command", "", "override the container command (empty value restores the image default)")
 	fl.StringVar(&f.envFile, "env-file", "", "read environment variables from a .env file (merges with existing)")
 	fl.BoolVar(&f.wait, "wait", true, "wait for the build to finish (use --wait=false for fire-and-forget)")
 	fl.DurationVar(&f.timeout, "timeout", 15*time.Minute, "max time to wait for the build")
@@ -278,6 +290,14 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 		setOpt(&cur.Docker.Username, f.dockerUser)
 		setOpt(&cur.Docker.Password, f.dockerPass)
 		cur.Git = nil
+		changed = true
+	}
+	if f.healthCheckPathSet {
+		app.HealthCheckPath = &f.healthCheckPath
+		changed = true
+	}
+	if f.commandSet {
+		app.CommandOverride = &f.command
 		changed = true
 	}
 	if len(f.volumes) > 0 {
