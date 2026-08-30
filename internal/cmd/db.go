@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -112,8 +113,113 @@ func postgresCmd(c *cli) *cobra.Command {
 			resp, err := a.GetPostgresStatusWithResponse(cmd.Context(), project, name)
 			return firstNonError(resp.JSON200, resp.StatusCode(), resp.Body, err)
 		}),
+		postgresExtensionsCmd(c),
 	)
 	return cmd
+}
+
+// postgresExtensionsCmd manages the extensions of a Postgres database.
+// Extensions are only ever added: an installed extension is never uninstalled,
+// as that would drop the data held in its types and tables.
+func postgresExtensionsCmd(c *cli) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "extensions",
+		Aliases: []string{"ext"},
+		Short:   "Manage Postgres extensions",
+	}
+	cmd.AddCommand(
+		&cobra.Command{
+			Use:     "ls",
+			Aliases: []string{"list"},
+			Short:   "List the extensions a database can request",
+			Args:    cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				cl, err := c.Client()
+				if err != nil {
+					return err
+				}
+				resp, err := cl.GetPostgresExtensionsWithResponse(cmd.Context())
+				if err != nil {
+					return err
+				}
+				if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
+					return err
+				}
+				var names []string
+				if resp.JSON200 != nil {
+					names = *resp.JSON200
+				}
+				rows := make([][]string, 0, len(names))
+				for _, n := range names {
+					rows = append(rows, []string{n})
+				}
+				return c.printer.Render(names, []string{"EXTENSION"}, rows)
+			},
+		},
+		postgresExtensionsAddCmd(c),
+	)
+	return cmd
+}
+
+func postgresExtensionsAddCmd(c *cli) *cobra.Command {
+	return &cobra.Command{
+		Use:   "add <name> <extension>...",
+		Short: "Install extensions in a Postgres database",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, added := args[0], args[1:]
+
+			a, project, err := c.clientAndProject(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			// the update replaces the whole database object, so start from the
+			// current one rather than sending a bare name and plan
+			getResp, err := a.GetPostgresInstanceWithResponse(cmd.Context(), project, name)
+			if err != nil {
+				return err
+			}
+			if err := checkResp(getResp.StatusCode(), getResp.Body); err != nil {
+				return err
+			}
+			pg := getResp.JSON200
+			if pg == nil {
+				return fmt.Errorf("postgres database %q not found", name)
+			}
+
+			var current []string
+			if pg.Extensions != nil {
+				current = *pg.Extensions
+			}
+			extensions := union(current, added)
+			pg.Extensions = &extensions
+
+			resp, err := a.UpdatePostgresWithResponse(cmd.Context(), project, name, *pg)
+			if err != nil {
+				return err
+			}
+			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Installing %s in %q. Run `hostim db postgres status %s` to see the installed extensions.\n",
+				strings.Join(added, ", "), name, name)
+			return nil
+		},
+	}
+}
+
+// union appends the names of b missing from a, keeping the order in which the
+// names were given.
+func union(a, b []string) []string {
+	out := append([]string{}, a...)
+	for _, v := range b {
+		if !slices.Contains(out, v) {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // ---- Redis ----

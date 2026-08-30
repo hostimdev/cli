@@ -64,6 +64,8 @@ hostim env push --app web --file .env
 hostim domain add example.com --app web
 hostim db postgres create main --plan small
 hostim db postgres credentials main -o json
+hostim db postgres extensions ls              # extensions a database can request
+hostim db postgres extensions add main postgis
 hostim volumes create data --plan small --size-mb 5120
 hostim regions ls
 hostim regions pricing eu-center --for apps

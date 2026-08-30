@@ -509,6 +509,21 @@ type AppStatusBuildStatus string
 // AppStatusRuntimeStatus The runtime status
 type AppStatusRuntimeStatus string
 
+// DomainStatus DNS resolution status of one custom domain
+type DomainStatus struct {
+	// Domain The domain
+	Domain string `json:"domain"`
+
+	// ExpectedIP The ingress IP the domain must point to
+	ExpectedIP string `json:"expectedIP"`
+
+	// Pointing True if the domain resolves to the expected IP
+	Pointing bool `json:"pointing"`
+
+	// ResolvedIPs The IPs the domain currently resolves to, empty if it does not resolve
+	ResolvedIPs []string `json:"resolvedIPs"`
+}
+
 // EnvVar defines model for EnvVar.
 type EnvVar struct {
 	// Name The env var name
@@ -673,6 +688,9 @@ type Postgres struct {
 	// Cost The cost of the PostgreSQL instance per month
 	Cost *float32 `json:"cost,omitempty"`
 
+	// Extensions Extensions requested for this database. Only names returned by /api/postgres/extensions are accepted. Removing a name does not uninstall the extension.
+	Extensions *[]string `json:"extensions,omitempty"`
+
 	// Name The PostgreSQL name
 	Name string `json:"name"`
 
@@ -738,6 +756,9 @@ type PostgresPricingType string
 type PostgresStatus struct {
 	// Created Whether the PostgreSQL database instance is created or not
 	Created bool `json:"created"`
+
+	// InstalledExtensions Extensions actually installed in the database, including ones installed outside of the requested list
+	InstalledExtensions *[]string `json:"installedExtensions,omitempty"`
 
 	// MigrationStatus The migration status of the PostgreSQL instance
 	MigrationStatus *PostgresStatusMigrationStatus `json:"migrationStatus,omitempty"`
@@ -1086,6 +1107,13 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// GetPostgresExtensions Get available PostgreSQL extensions
+	//
+	// Get the PostgreSQL extensions a database may request.
+	//
+	// Corresponds with GET /api/postgres/extensions (the `GetPostgresExtensions` operationId).
+	GetPostgresExtensions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetProjects Get all projects
 	//
 	// Get all projects from the database.
@@ -1202,6 +1230,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/projects/{projectName}/apps/{appName}/domain (the `AddDomain` operationId).
 	AddDomain(ctx context.Context, projectName string, appName string, body AddDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDomainStatus Get DNS status of the app domains
+	//
+	// Resolve each custom domain of the app and report whether it points to the region ingress IP.
+	//
+	// Corresponds with GET /api/projects/{projectName}/apps/{appName}/domain/status (the `GetDomainStatus` operationId).
+	GetDomainStatus(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetAppEnv Get environment variables
 	//
@@ -1613,6 +1648,23 @@ type ClientInterface interface {
 	ParseDockerCompose(ctx context.Context, body ParseDockerComposeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
+// GetPostgresExtensions Get available PostgreSQL extensions
+//
+// Get the PostgreSQL extensions a database may request.
+//
+// Corresponds with GET /api/postgres/extensions (the `GetPostgresExtensions` operationId).
+func (c *Client) GetPostgresExtensions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPostgresExtensionsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetProjects Get all projects
 //
 // Get all projects from the database.
@@ -1890,6 +1942,23 @@ func (c *Client) AddDomainWithBody(ctx context.Context, projectName string, appN
 // Corresponds with POST /api/projects/{projectName}/apps/{appName}/domain (the `AddDomain` operationId).
 func (c *Client) AddDomain(ctx context.Context, projectName string, appName string, body AddDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAddDomainRequest(c.Server, projectName, appName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetDomainStatus Get DNS status of the app domains
+//
+// Resolve each custom domain of the app and report whether it points to the region ingress IP.
+//
+// Corresponds with GET /api/projects/{projectName}/apps/{appName}/domain/status (the `GetDomainStatus` operationId).
+func (c *Client) GetDomainStatus(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDomainStatusRequest(c.Server, projectName, appName)
 	if err != nil {
 		return nil, err
 	}
@@ -2979,6 +3048,33 @@ func (c *Client) ParseDockerCompose(ctx context.Context, body ParseDockerCompose
 	return c.Client.Do(req)
 }
 
+// NewGetPostgresExtensionsRequest constructs an http.Request for the GetPostgresExtensions method
+func NewGetPostgresExtensionsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/postgres/extensions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetProjectsRequest constructs an http.Request for the GetProjects method
 func NewGetProjectsRequest(server string) (*http.Request, error) {
 	var err error
@@ -3523,6 +3619,47 @@ func NewAddDomainRequestWithBody(server string, projectName string, appName stri
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetDomainStatusRequest constructs an http.Request for the GetDomainStatus method
+func NewGetDomainStatusRequest(server string, projectName string, appName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "appName", appName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/apps/%s/domain/status", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -5963,6 +6100,15 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// GetPostgresExtensionsWithResponse Get available PostgreSQL extensions
+	//
+	// Get the PostgreSQL extensions a database may request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/postgres/extensions (the `GetPostgresExtensions` operationId).
+	GetPostgresExtensionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPostgresExtensionsResponse, error)
+
 	// GetProjectsWithResponse Get all projects
 	//
 	// Get all projects from the database.
@@ -6093,6 +6239,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/projects/{projectName}/apps/{appName}/domain (the `AddDomain` operationId).
 	AddDomainWithResponse(ctx context.Context, projectName string, appName string, body AddDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*AddDomainResponse, error)
+
+	// GetDomainStatusWithResponse Get DNS status of the app domains
+	//
+	// Resolve each custom domain of the app and report whether it points to the region ingress IP.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/apps/{appName}/domain/status (the `GetDomainStatus` operationId).
+	GetDomainStatusWithResponse(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*GetDomainStatusResponse, error)
 
 	// GetAppEnvWithResponse Get environment variables
 	//
@@ -6592,6 +6747,54 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/templates/docker-compose (the `ParseDockerCompose` operationId).
 	ParseDockerComposeWithResponse(ctx context.Context, body ParseDockerComposeJSONRequestBody, reqEditors ...RequestEditorFn) (*ParseDockerComposeResponse, error)
+}
+
+type GetPostgresExtensionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]string
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPostgresExtensionsResponse) GetJSON200() *[]string {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetPostgresExtensionsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPostgresExtensionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPostgresExtensionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPostgresExtensionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPostgresExtensionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type GetProjectsResponse struct {
@@ -7332,6 +7535,68 @@ func (r AddDomainResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AddDomainResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetDomainStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]DomainStatus
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetDomainStatusResponse) GetJSON200() *[]DomainStatus {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetDomainStatusResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetDomainStatusResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetDomainStatusResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetDomainStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDomainStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDomainStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetDomainStatusResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -10823,6 +11088,21 @@ func (r ParseDockerComposeResponse) ContentType() string {
 	return ""
 }
 
+// GetPostgresExtensionsWithResponse Get available PostgreSQL extensions
+//
+// Get the PostgreSQL extensions a database may request.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/postgres/extensions (the `GetPostgresExtensions` operationId).
+func (c *ClientWithResponses) GetPostgresExtensionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPostgresExtensionsResponse, error) {
+	rsp, err := c.GetPostgresExtensions(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPostgresExtensionsResponse(rsp)
+}
+
 // GetProjectsWithResponse Get all projects
 //
 // Get all projects from the database.
@@ -11054,6 +11334,21 @@ func (c *ClientWithResponses) AddDomainWithResponse(ctx context.Context, project
 		return nil, err
 	}
 	return ParseAddDomainResponse(rsp)
+}
+
+// GetDomainStatusWithResponse Get DNS status of the app domains
+//
+// Resolve each custom domain of the app and report whether it points to the region ingress IP.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/apps/{appName}/domain/status (the `GetDomainStatus` operationId).
+func (c *ClientWithResponses) GetDomainStatusWithResponse(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*GetDomainStatusResponse, error) {
+	rsp, err := c.GetDomainStatus(ctx, projectName, appName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDomainStatusResponse(rsp)
 }
 
 // GetAppEnvWithResponse Get environment variables
@@ -11957,6 +12252,39 @@ func (c *ClientWithResponses) ParseDockerComposeWithResponse(ctx context.Context
 	return ParseParseDockerComposeResponse(rsp)
 }
 
+// ParseGetPostgresExtensionsResponse parses an HTTP response from a GetPostgresExtensionsWithResponse call
+func ParseGetPostgresExtensionsResponse(rsp *http.Response) (*GetPostgresExtensionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPostgresExtensionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []string
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetProjectsResponse parses an HTTP response from a GetProjectsWithResponse call
 func ParseGetProjectsResponse(rsp *http.Response) (*GetProjectsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -12490,6 +12818,53 @@ func ParseAddDomainResponse(rsp *http.Response) (*AddDomainResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetDomainStatusResponse parses an HTTP response from a GetDomainStatusWithResponse call
+func ParseGetDomainStatusResponse(rsp *http.Response) (*GetDomainStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDomainStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []DomainStatus
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
