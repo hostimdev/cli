@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/hostimdev/cli/api"
 )
@@ -74,7 +75,7 @@ func newExecCmd(c *cli) *cobra.Command {
 			// terminal and could type into it. Handing it a stdin that ends right
 			// away costs output: the cluster stops the container's output as soon
 			// as the exec's stdin stream closes.
-			wantStdin := stdin || isTerminal(os.Stdin)
+			wantStdin := stdin || term.IsTerminal(int(os.Stdin.Fd()))
 			sshArgs := buildSSHArgs(host, p.Id, identity, app, remote, wantStdin)
 			run := exec.CommandContext(cmd.Context(), sshBin, sshArgs...)
 			run.Stdin, run.Stdout, run.Stderr = os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()
@@ -275,14 +276,4 @@ func keyMaterial(key string) string {
 		return ""
 	}
 	return f[0] + " " + f[1]
-}
-
-// isTerminal reports whether f is a terminal, which is how the CLI decides
-// whether a command could have anything to read on stdin.
-func isTerminal(f *os.File) bool {
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
 }
