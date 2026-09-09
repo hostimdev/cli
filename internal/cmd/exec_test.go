@@ -7,14 +7,14 @@ import (
 
 func TestBuildSSHArgs(t *testing.T) {
 	// Interactive: pty forced, no remote command beyond the shell helper.
-	got := buildSSHArgs("ssh.eu-center.hostim.dev", "hpr-123", "", "web", nil)
+	got := buildSSHArgs("ssh.eu-center.hostim.dev", "hpr-123", "", "web", nil, true)
 	want := "-tt -l hpr-123 ssh.eu-center.hostim.dev shell web"
 	if strings.Join(got, " ") != want {
 		t.Errorf("interactive args = %q, want %q", got, want)
 	}
 
 	// A command is quoted so the remote login shell passes it through whole.
-	got = buildSSHArgs("host", "hpr-123", "/k/id", "web", []string{"sh", "-c", "echo 'hi there'"})
+	got = buildSSHArgs("host", "hpr-123", "/k/id", "web", []string{"sh", "-c", "echo 'hi there'"}, false)
 	if got[0] != "-i" || got[1] != "/k/id" || got[2] != "-T" {
 		t.Errorf("identity/no-tty args wrong: %q", got)
 	}
@@ -26,8 +26,19 @@ func TestBuildSSHArgs(t *testing.T) {
 		t.Errorf("command not quoted for the remote shell: %q", remote)
 	}
 
+	// With stdin asked for, the remote helper gets the flag; an interactive
+	// session never needs it.
+	got = buildSSHArgs("host", "hpr-123", "", "web", []string{"cat"}, true)
+	if remote := got[len(got)-1]; remote != "shell --stdin web -- cat" {
+		t.Errorf("stdin remote command = %q", remote)
+	}
+	got = buildSSHArgs("host", "hpr-123", "", "web", nil, true)
+	if remote := got[len(got)-1]; remote != "shell web" {
+		t.Errorf("interactive remote command = %q", remote)
+	}
+
 	// Region hosts may carry a port.
-	got = buildSSHArgs("host:2222", "hpr-1", "", "web", nil)
+	got = buildSSHArgs("host:2222", "hpr-1", "", "web", nil, false)
 	if strings.Join(got, " ") != "-p 2222 -tt -l hpr-1 host shell web" {
 		t.Errorf("port args = %q", got)
 	}

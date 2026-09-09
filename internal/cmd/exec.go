@@ -25,6 +25,7 @@ import (
 // the remote command's exit status as its own.
 func newExecCmd(c *cli) *cobra.Command {
 	var identity string
+	var stdin bool
 	cmd := &cobra.Command{
 		Use:     "exec <app> [-- <command> [args...]]",
 		Aliases: []string{"shell", "ssh"},
@@ -35,7 +36,8 @@ func newExecCmd(c *cli) *cobra.Command {
 			"  hostim exec chatwoot                      # interactive shell\n" +
 			"  hostim exec chatwoot -- rails c           # one-off command\n" +
 			"  hostim exec freshrss -- cat /tmp/FreshRSS.log\n" +
-			"  hostim exec freshrss -- sh -c 'ls -la /var/www | head'",
+			"  hostim exec freshrss -- sh -c 'ls -la /var/www | head'\n" +
+			"  cat dump.sql | hostim exec --stdin postgres -- psql app   # pipe data in",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app, remote := args[0], args[1:]
@@ -68,7 +70,12 @@ func newExecCmd(c *cli) *cobra.Command {
 				return err
 			}
 
-			sshArgs := buildSSHArgs(host, p.Id, identity, app, remote)
+			// A command reads stdin only when asked to, or when the user is at a
+			// terminal and could type into it. Handing it a stdin that ends right
+			// away costs output: the cluster stops the container's output as soon
+			// as the exec's stdin stream closes.
+			wantStdin := stdin || isTerminal(os.Stdin)
+			sshArgs := buildSSHArgs(host, p.Id, identity, app, remote, wantStdin)
 			run := exec.CommandContext(cmd.Context(), sshBin, sshArgs...)
 			run.Stdin, run.Stdout, run.Stderr = os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()
 			if err := run.Run(); err != nil {
@@ -84,13 +91,14 @@ func newExecCmd(c *cli) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&identity, "identity", "i", "", "SSH private key to use (passed to ssh -i)")
+	cmd.Flags().BoolVar(&stdin, "stdin", false, "pipe local stdin into the command (implied when stdin is a terminal)")
 	return cmd
 }
 
 // buildSSHArgs assembles the ssh invocation. The remote side always runs the
 // bastion's `shell` helper; a command is quoted so the login shell passes it
 // through unchanged.
-func buildSSHArgs(host, projectID, identity, app string, remote []string) []string {
+func buildSSHArgs(host, projectID, identity, app string, remote []string, stdin bool) []string {
 	args := []string{}
 	if identity != "" {
 		args = append(args, "-i", identity)
@@ -108,7 +116,13 @@ func buildSSHArgs(host, projectID, identity, app string, remote []string) []stri
 	}
 	args = append(args, "-l", projectID, host)
 
-	shellCmd := "shell " + shellQuote(app)
+	shellCmd := "shell "
+	if stdin && len(remote) > 0 {
+		// An interactive session always gets stdin, so the flag is only needed
+		// for a command.
+		shellCmd += "--stdin "
+	}
+	shellCmd += shellQuote(app)
 	if len(remote) > 0 {
 		shellCmd += " --"
 		for _, a := range remote {
@@ -261,4 +275,14 @@ func keyMaterial(key string) string {
 		return ""
 	}
 	return f[0] + " " + f[1]
+}
+
+// isTerminal reports whether f is a terminal, which is how the CLI decides
+// whether a command could have anything to read on stdin.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }

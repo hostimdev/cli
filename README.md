@@ -66,6 +66,7 @@ hostim domain status web                      # attached domains + DNS state
 hostim exec web                               # interactive shell in the container
 hostim exec web -- rails c                    # one-off command, exits with its status
 hostim exec web -- cat /tmp/app.log           # read a file the app does not log to stdout
+cat dump.sql | hostim exec --stdin db -- psql app   # pipe data into the command
 hostim db postgres create main --plan small
 hostim db postgres credentials main -o json
 hostim db postgres extensions ls              # extensions a database can request
