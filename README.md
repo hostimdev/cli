@@ -63,6 +63,9 @@ hostim env pull --app web --file .env
 hostim env push --app web --file .env
 hostim domain add example.com -a web          # prints the A record to create
 hostim domain status web                      # attached domains + DNS state
+hostim exec web                               # interactive shell in the container
+hostim exec web -- rails c                    # one-off command, exits with its status
+hostim exec web -- cat /tmp/app.log           # read a file the app does not log to stdout
 hostim db postgres create main --plan small
 hostim db postgres credentials main -o json
 hostim db postgres extensions ls              # extensions a database can request

@@ -91,6 +91,7 @@ func Execute() {
 		newAppsCmd(c),
 		newEnvCmd(c),
 		newDomainCmd(c),
+		newExecCmd(c),
 		newDBCmd(c),
 		newVolumesCmd(c),
 		newRegionsCmd(c),
@@ -98,6 +99,12 @@ func Execute() {
 	)
 
 	if err := root.Execute(); err != nil {
+		// A command that ran something remotely (hostim exec) reports that
+		// program's exit status as ours, with no message of our own.
+		var ee exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
 		// errAborted's message was already shown by the confirm helper; other
 		// errors get the "error:" prefix.
 		if !errors.Is(err, errAborted) {
@@ -106,3 +113,8 @@ func Execute() {
 		os.Exit(1)
 	}
 }
+
+// exitError carries an exit status for the process, in place of an error message.
+type exitError struct{ code int }
+
+func (e exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
