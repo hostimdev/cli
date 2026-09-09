@@ -162,7 +162,7 @@ components:
   redis: []
 `), 0o600)
 
-	tmpl, err := loadTemplateFile(path)
+	tmpl, err := loadTemplateFile(path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,15 +177,23 @@ components:
 		t.Errorf("deploymentSource not decoded: %+v", app.DeploymentSource)
 	}
 
-	// A list of templates is a common mistake and must be rejected clearly.
+	// A list of templates (the shape of backend/templates.yml) is accepted, but
+	// needs --id to say which entry to use.
 	listPath := filepath.Join(dir, "list.yml")
-	_ = os.WriteFile(listPath, []byte("- name: a\n- name: b\n"), 0o600)
-	if _, err := loadTemplateFile(listPath); err == nil || !strings.Contains(err.Error(), "list of templates") {
-		t.Errorf("list file error = %v, want 'list of templates'", err)
+	_ = os.WriteFile(listPath, []byte("- name: a\n  id: a\n- name: b\n  id: b\n"), 0o600)
+	if _, err := loadTemplateFile(listPath, ""); err == nil || !strings.Contains(err.Error(), "--id") {
+		t.Errorf("list file without --id error = %v, want '--id'", err)
+	}
+	got, err := loadTemplateFile(listPath, "b")
+	if err != nil || got.Name != "b" {
+		t.Errorf("loadTemplateFile(list, \"b\") = %+v, %v", got, err)
+	}
+	if _, err := loadTemplateFile(listPath, "c"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("unknown --id error = %v, want 'not found'", err)
 	}
 
 	// Missing file surfaces an error.
-	if _, err := loadTemplateFile(filepath.Join(dir, "nope.yml")); err == nil {
+	if _, err := loadTemplateFile(filepath.Join(dir, "nope.yml"), ""); err == nil {
 		t.Error("expected error for missing file")
 	}
 }
@@ -246,7 +254,7 @@ func TestTemplateToYAMLRoundTrip(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := loadTemplateFile(path)
+	got, err := loadTemplateFile(path, "")
 	if err != nil {
 		t.Fatalf("saved YAML did not round-trip: %v", err)
 	}

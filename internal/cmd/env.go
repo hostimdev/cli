@@ -21,7 +21,7 @@ type envScope struct {
 }
 
 func (c *cli) addEnvFlags(cmd *cobra.Command, s *envScope) {
-	cmd.Flags().StringVar(&s.app, "app", "", "app whose env vars to manage")
+	appFlag(cmd, &s.app, "app whose env vars to manage")
 	cmd.Flags().BoolVar(&s.global, "global", false, "manage the project-wide global env instead of an app")
 	s.c = c
 }

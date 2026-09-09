@@ -28,7 +28,7 @@ func newTemplatesCmd(c *cli) *cobra.Command {
 		Aliases: []string{"template", "tpl"},
 		Short:   "List and deploy templates (including from a docker-compose file)",
 	}
-	cmd.AddCommand(templatesListCmd(c), templatesShowCmd(c), templatesApplyCmd(c))
+	cmd.AddCommand(templatesListCmd(c), templatesShowCmd(c), templatesApplyCmd(c), templatesValidateCmd(c))
 	return cmd
 }
 
@@ -172,7 +172,9 @@ func templatesApplyCmd(c *cli) *cobra.Command {
 			"apps) into a project, creating each and waiting for it to become ready.\n\n" +
 			"Pick exactly one source:\n" +
 			"  --id <template-id>   a curated template from the platform\n" +
-			"  -f <file>            a local template YAML file\n" +
+			"  -f <file>            a local template YAML file (single template or a\n" +
+			"                       list like backend/templates.yml — with a list, use\n" +
+			"                       --id to pick the entry)\n" +
 			"  --compose <file>     a docker-compose file, converted to a template via the API\n\n" +
 			"The resources land in the resolved project (-p / current project) unless\n" +
 			"--new-project is given, which creates a fresh project first.\n\n" +
@@ -190,11 +192,11 @@ func templatesApplyCmd(c *cli) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.id, "id", "", "curated template ID to deploy")
+	fl.StringVar(&f.id, "id", "", "curated template ID to deploy, or the entry to pick out of a -f list")
 	fl.StringVarP(&f.file, "file", "f", "", "local template YAML file to deploy")
 	fl.StringVar(&f.compose, "compose", "", "docker-compose file to convert and deploy")
 	fl.StringVar(&f.newProject, "new-project", "", "create a new project with this name before deploying")
-	fl.StringVar(&f.region, "region", "", "region for --new-project")
+	fl.StringVar(&f.region, "region", "", "region for --new-project (defaults to the only region when there is one)")
 	fl.StringVar(&f.save, "save", "", "write the resolved template to this YAML file instead of deploying")
 	fl.BoolVar(&f.skipExisting, "skip-existing", false, "skip resources that already exist instead of aborting")
 	fl.BoolVarP(&f.yes, "yes", "y", false, "skip the confirmation prompt")
@@ -208,14 +210,14 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 
-	// Exactly one source.
-	n := 0
-	for _, s := range []string{f.id, f.file, f.compose} {
-		if s != "" {
-			n++
-		}
-	}
-	if n != 1 {
+	// One source. --id doubles as the entry selector inside a -f file that holds
+	// a list of templates (which is what backend/templates.yml is).
+	switch {
+	case f.file != "" && f.compose != "":
+		return fmt.Errorf("provide exactly one of --id, --file or --compose")
+	case f.compose != "" && f.id != "":
+		return fmt.Errorf("provide exactly one of --id, --file or --compose")
+	case f.file == "" && f.compose == "" && f.id == "":
 		return fmt.Errorf("provide exactly one of --id, --file or --compose")
 	}
 
@@ -227,12 +229,12 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 	// Load the template from the chosen source.
 	var tmpl *api.Template
 	switch {
-	case f.id != "":
-		tmpl, err = fetchTemplate(ctx, a, f.id)
 	case f.file != "":
-		tmpl, err = loadTemplateFile(f.file)
+		tmpl, err = loadTemplateFile(f.file, f.id)
 	case f.compose != "":
 		tmpl, err = parseCompose(ctx, out, a, f.compose)
+	default:
+		tmpl, err = fetchTemplate(ctx, a, f.id)
 	}
 	if err != nil {
 		return err
@@ -615,7 +617,12 @@ func fetchExisting(ctx context.Context, a *api.ClientWithResponses, project stri
 func resolveApplyProject(ctx context.Context, out io.Writer, c *cli, a *api.ClientWithResponses, f *applyFlags) (string, error) {
 	if f.newProject != "" {
 		if f.region == "" {
-			return "", fmt.Errorf("--region is required with --new-project")
+			region, err := defaultRegion(ctx, a)
+			if err != nil {
+				return "", err
+			}
+			f.region = region
+			fmt.Fprintf(out, "Using region %s.\n", region)
 		}
 		resp, err := a.CreateProjectWithResponse(ctx, &api.CreateProjectParams{
 			RegionName: f.region,
@@ -871,9 +878,10 @@ func fetchTemplate(ctx context.Context, a *api.ClientWithResponses, id string) (
 	return nil, fmt.Errorf("template %q not found; available: %s", id, strings.Join(ids, ", "))
 }
 
-// loadTemplateFile reads a single template from a local YAML file. YAML is
-// converted to JSON so the struct's json tags (camelCase) decode correctly.
-func loadTemplateFile(path string) (*api.Template, error) {
+// loadTemplates reads a local YAML file holding either one template object or a
+// list of them (the shape of backend/templates.yml). YAML is converted to JSON
+// so the struct's json tags (camelCase) decode correctly.
+func loadTemplates(path string) ([]api.Template, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -882,21 +890,127 @@ func loadTemplateFile(path string) (*api.Template, error) {
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
-	if _, isList := doc.([]any); isList {
-		return nil, fmt.Errorf("%s contains a list of templates; --file expects a single template object", path)
-	}
 	jb, err := json.Marshal(doc)
 	if err != nil {
 		return nil, err
 	}
-	var t api.Template
-	if err := json.Unmarshal(jb, &t); err != nil {
-		return nil, fmt.Errorf("interpreting %s: %w", path, err)
+	var list []api.Template
+	if _, isList := doc.([]any); isList {
+		if err := json.Unmarshal(jb, &list); err != nil {
+			return nil, fmt.Errorf("interpreting %s: %w", path, err)
+		}
+	} else {
+		var t api.Template
+		if err := json.Unmarshal(jb, &t); err != nil {
+			return nil, fmt.Errorf("interpreting %s: %w", path, err)
+		}
+		list = []api.Template{t}
 	}
-	if t.Name == "" {
-		return nil, fmt.Errorf("%s is not a valid template (missing name)", path)
+	for _, t := range list {
+		if t.Name == "" {
+			return nil, fmt.Errorf("%s is not a valid template (an entry is missing name)", path)
+		}
 	}
-	return &t, nil
+	if len(list) == 0 {
+		return nil, fmt.Errorf("%s contains no templates", path)
+	}
+	return list, nil
+}
+
+// loadTemplateFile reads one template from a local YAML file. When the file is a
+// list, id picks the entry by id or name; a single-entry list needs no id.
+func loadTemplateFile(path, id string) (*api.Template, error) {
+	list, err := loadTemplates(path)
+	if err != nil {
+		return nil, err
+	}
+	if id == "" {
+		if len(list) == 1 {
+			return &list[0], nil
+		}
+		return nil, fmt.Errorf("%s contains %d templates; pick one with --id <id> (available: %s)",
+			path, len(list), strings.Join(templateIDs(list), ", "))
+	}
+	for i := range list {
+		if list[i].Id == id || list[i].Name == id {
+			return &list[i], nil
+		}
+	}
+	return nil, fmt.Errorf("template %q not found in %s; available: %s", id, path, strings.Join(templateIDs(list), ", "))
+}
+
+func templateIDs(list []api.Template) []string {
+	ids := make([]string, 0, len(list))
+	for _, t := range list {
+		if t.Id != "" {
+			ids = append(ids, t.Id)
+			continue
+		}
+		ids = append(ids, t.Name)
+	}
+	return ids
+}
+
+// templatesValidateCmd runs the same offline checks apply does, without touching
+// the API, so a freshly written templates.yml entry can be checked before commit.
+func templatesValidateCmd(c *cli) *cobra.Command {
+	var file, id string
+	cmd := &cobra.Command{
+		Use:   "validate -f <file>",
+		Short: "Check a local template file offline (no API calls)",
+		Long: "Validate a local template YAML file: every resource has a plan and a\n" +
+			"valid name. Accepts a single template or a list (backend/templates.yml).\n" +
+			"Without --id every entry in the file is checked.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if file == "" {
+				return fmt.Errorf("--file is required")
+			}
+			list, err := loadTemplates(file)
+			if err != nil {
+				return err
+			}
+			if id != "" {
+				t, err := loadTemplateFile(file, id)
+				if err != nil {
+					return err
+				}
+				list = []api.Template{*t}
+			}
+			out := cmd.OutOrStdout()
+			bad := 0
+			for i := range list {
+				t := &list[i]
+				name := t.Id
+				if name == "" {
+					name = t.Name
+				}
+				var problems []string
+				if err := checkPlans(t); err != nil {
+					problems = append(problems, err.Error())
+				}
+				if err := validateNames(t); err != nil {
+					problems = append(problems, err.Error())
+				}
+				if len(problems) == 0 {
+					fmt.Fprintf(out, "ok    %s (%s)\n", name, summarize(t))
+					continue
+				}
+				bad++
+				fmt.Fprintf(out, "FAIL  %s\n", name)
+				for _, p := range problems {
+					fmt.Fprintf(out, "      %s\n", p)
+				}
+			}
+			if bad > 0 {
+				return fmt.Errorf("%d of %d templates invalid", bad, len(list))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&file, "file", "f", "", "local template YAML file to validate (required)")
+	cmd.Flags().StringVar(&id, "id", "", "validate only this entry of a template list")
+	return cmd
 }
 
 // saveTemplate writes a template to a local YAML file for editing. Validation
@@ -1132,4 +1246,24 @@ func waitFor(ctx context.Context, interval, timeout time.Duration, check func() 
 		case <-time.After(interval):
 		}
 	}
+}
+
+// defaultRegion returns the only region the platform offers, so --region can be
+// omitted while there is nothing to choose between.
+func defaultRegion(ctx context.Context, a *api.ClientWithResponses) (string, error) {
+	resp, err := a.GetRegionsWithResponse(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
+		return "", err
+	}
+	var names []string
+	if resp.JSON200 != nil {
+		names = *resp.JSON200
+	}
+	if len(names) == 1 {
+		return names[0], nil
+	}
+	return "", fmt.Errorf("--region is required with --new-project (available: %s)", strings.Join(names, ", "))
 }

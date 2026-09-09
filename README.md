@@ -61,12 +61,15 @@ hostim events web -f                          # keep printing new events
 hostim env set KEY=VALUE --app web            # or --global
 hostim env pull --app web --file .env
 hostim env push --app web --file .env
-hostim domain add example.com --app web
+hostim domain add example.com -a web          # prints the A record to create
+hostim domain status web                      # attached domains + DNS state
 hostim db postgres create main --plan small
 hostim db postgres credentials main -o json
 hostim db postgres extensions ls              # extensions a database can request
 hostim db postgres extensions add main postgis
 hostim volumes create data --plan small --size-mb 5120
+hostim templates validate -f templates.yml    # offline check, no API calls
+hostim templates apply -f templates.yml --id freshrss
 hostim regions ls
 hostim regions pricing eu-center --for apps
 hostim completion zsh > "${fpath[1]}/_hostim"

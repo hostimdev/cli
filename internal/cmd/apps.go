@@ -57,10 +57,11 @@ func appsListCmd(c *cli) *cobra.Command {
 					strconv.Itoa(a.Replicas),
 					strconv.FormatBool(a.Public),
 					a.Plan,
+					dash(str(a.BuiltInDomain)),
 				})
 			}
 			return c.printer.Render(apps,
-				[]string{"NAME", "SOURCE", "REPLICAS", "PUBLIC", "PLAN"}, rows)
+				[]string{"NAME", "SOURCE", "REPLICAS", "PUBLIC", "PLAN", "DOMAIN"}, rows)
 		},
 	}
 }
