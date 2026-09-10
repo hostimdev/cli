@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -124,8 +123,7 @@ func appsRemoveCmd(c *cli) *cobra.Command {
 			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Deleted app %q.\n", args[0])
-			return nil
+			return c.result(cmd, res("deleted", "app", args[0]), "Deleted app %q.", args[0])
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
@@ -149,8 +147,7 @@ func appsRebuildCmd(c *cli) *cobra.Command {
 			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Rebuild triggered for %q.\n", args[0])
-			return nil
+			return c.result(cmd, res("rebuilding", "app", args[0]), "Rebuild triggered for %q.", args[0])
 		},
 	}
 }
@@ -172,8 +169,7 @@ func appsRestartCmd(c *cli) *cobra.Command {
 			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Restarted %q.\n", args[0])
-			return nil
+			return c.result(cmd, res("restarted", "app", args[0]), "Restarted %q.", args[0])
 		},
 	}
 }

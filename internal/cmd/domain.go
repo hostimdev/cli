@@ -47,17 +47,24 @@ func domainAddCmd(c *cli) *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "Added domain %s to %s.\n", args[0], app)
-			// Print the DNS record the domain needs, since that is the next thing
-			// the user has to do and the ingress IP is otherwise only in
-			// `regions get`.
+			c.progress(cmd, "Added domain %s to %s.\n", args[0], app)
+			// Report the DNS record the domain needs, since that is the next
+			// thing the user (or the agent) has to do and the ingress IP is
+			// otherwise only in `regions get`.
+			payload := res("added", "domain", args[0], "app", app)
 			st, err := domainStatuses(cmd, c, app)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read domain status: %v\n", err)
-				return nil
+				return c.result(cmd, payload, "")
 			}
 			for _, s := range st {
 				if s.Domain != args[0] {
+					continue
+				}
+				payload["expectedIp"] = s.ExpectedIP
+				payload["resolvedIps"] = s.ResolvedIPs
+				payload["pointing"] = s.Pointing
+				if c.jsonOut() {
 					continue
 				}
 				fmt.Fprintf(out, "\nPoint it at the region ingress:\n  %s  A  %s\n", s.Domain, s.ExpectedIP)
@@ -65,7 +72,7 @@ func domainAddCmd(c *cli) *cobra.Command {
 					fmt.Fprintf(out, "It does not resolve there yet (currently: %s).\n", dash(joinStrings(s.ResolvedIPs)))
 				}
 			}
-			return nil
+			return c.result(cmd, payload, "")
 		},
 	}
 	appFlag(cmd, &app, "app to add the domain to (required)")
@@ -98,8 +105,8 @@ func domainRemoveCmd(c *cli) *cobra.Command {
 			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Removed domain %s from %s.\n", args[0], app)
-			return nil
+			return c.result(cmd, res("removed", "domain", args[0], "app", app),
+				"Removed domain %s from %s.", args[0], app)
 		},
 	}
 	appFlag(cmd, &app, "app to remove the domain from (required)")

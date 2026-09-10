@@ -143,8 +143,8 @@ func envSetCmd(c *cli) *cobra.Command {
 			if err := s.set(cmd, a, project, merged); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Set %d variable(s).\n", len(updates))
-			return nil
+			return c.result(cmd, res("ok", "env", "", "set", len(updates)),
+				"Set %d variable(s).", len(updates))
 		},
 	}
 	c.addEnvFlags(cmd, s)
@@ -182,8 +182,8 @@ func envRmCmd(c *cli) *cobra.Command {
 			if err := s.set(cmd, a, project, kept); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Removed %d variable(s).\n", len(cur)-len(kept))
-			return nil
+			return c.result(cmd, res("ok", "env", "", "removed", len(cur)-len(kept)),
+				"Removed %d variable(s).", len(cur)-len(kept))
 		},
 	}
 	c.addEnvFlags(cmd, s)
@@ -223,7 +223,8 @@ func envPullCmd(c *cli) *cobra.Command {
 				fmt.Fprintf(w, "%s=%s\n", v.Name, v.Value)
 			}
 			if file != "" && file != "-" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Wrote %d variable(s) to %s.\n", len(vars), file)
+				return c.result(cmd, res("ok", "env", "", "written", len(vars), "file", file),
+					"Wrote %d variable(s) to %s.", len(vars), file)
 			}
 			return nil
 		},
@@ -267,8 +268,8 @@ func envPushCmd(c *cli) *cobra.Command {
 			if err := s.set(cmd, a, project, final); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Pushed %d variable(s) from %s.\n", len(loaded), file)
-			return nil
+			return c.result(cmd, res("ok", "env", "", "pushed", len(loaded), "file", file),
+				"Pushed %d variable(s) from %s.", len(loaded), file)
 		},
 	}
 	c.addEnvFlags(cmd, s)

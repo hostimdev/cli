@@ -55,7 +55,14 @@ func newDeployCmd(c *cli) *cobra.Command {
 		Long: "Deploy an app: create it (from --git or --docker-image) if it does not\n" +
 			"exist, otherwise update its source and trigger a rebuild. By default the\n" +
 			"command waits for the build to finish and exits non-zero if it fails,\n" +
-			"making it safe to use in CI pipelines.",
+			"making it safe to use in CI pipelines.\n\n" +
+			"This command deploys one app. An app that also needs a database, a redis\n" +
+			"or a volume is deployed as a template: `hostim templates apply --id <id>\n" +
+			"--save stack.yml` writes a curated stack to copy from, `--compose\n" +
+			"docker-compose.yml` converts a compose file, `templates validate -f` checks\n" +
+			"the result offline and `templates apply -f` creates every resource in order.\n\n" +
+			"With -o json the command prints a single result object and nothing else;\n" +
+			"failures print a JSON object on stderr and exit non-zero.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f.healthCheckPathSet = cmd.Flags().Changed("health-check-path")
@@ -94,7 +101,6 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 		return err
 	}
 	ctx := cmd.Context()
-	out := cmd.OutOrStdout()
 
 	// Does the app already exist?
 	getResp, err := a.GetAppWithResponse(ctx, project, appName)
@@ -106,6 +112,8 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 	// srcType is the app's final deployment source ("git" or "docker"), used
 	// below to decide whether to wait on a build or on runtime readiness.
 	var srcType string
+	// action is what this run did to the app, reported in the -o json result.
+	action := "rebuilding"
 
 	if exists {
 		app := *getResp.JSON200
@@ -134,7 +142,7 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 		if err := checkResp(reb.StatusCode(), reb.Body); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Rebuilding %q...\n", appName)
+		c.progress(cmd, "Rebuilding %q...\n", appName)
 	} else {
 		if getResp.StatusCode() != 404 {
 			// A non-404 error is a real failure (auth, server), not "missing app".
@@ -154,12 +162,13 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 		if err := checkResp(crt.StatusCode(), crt.Body); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Created %q, building...\n", appName)
+		action = "created"
+		c.progress(cmd, "Created %q, building...\n", appName)
 	}
 
 	if !f.wait {
-		fmt.Fprintln(out, "Not waiting for build (--wait=false).")
-		return nil
+		return c.result(cmd, res("queued", "app", appName, "action", action),
+			"Not waiting for build (--wait=false).")
 	}
 
 	// A git source builds an image before running, so the build outcome is what
@@ -172,14 +181,14 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 
 	var lastBuild api.AppStatusBuildStatus
 	var lastRuntime api.AppStatusRuntimeStatus
-	res, err := client.PollBuild(ctx, a, project, appName, f.interval, expectBuild, func(st *api.AppStatus) {
+	final, err := client.PollBuild(ctx, a, project, appName, f.interval, expectBuild, func(st *api.AppStatus) {
 		if st.BuildStatus != nil && *st.BuildStatus != "" && *st.BuildStatus != lastBuild {
 			lastBuild = *st.BuildStatus
-			fmt.Fprintf(out, "  build: %s\n", *st.BuildStatus)
+			c.progress(cmd, "  build: %s\n", *st.BuildStatus)
 		}
 		if !expectBuild && st.RuntimeStatus != nil && *st.RuntimeStatus != lastRuntime {
 			lastRuntime = *st.RuntimeStatus
-			fmt.Fprintf(out, "  runtime: %s\n", *st.RuntimeStatus)
+			c.progress(cmd, "  runtime: %s\n", *st.RuntimeStatus)
 		}
 	})
 	if err != nil {
@@ -188,7 +197,7 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 		}
 		if errors.Is(err, client.ErrDeployFailed) {
 			return fmt.Errorf("deploy failed: app did not become healthy (runtime: %s); see `hostim logs %s` and `hostim events`",
-				dash(string(res.RuntimeStatus)), appName)
+				dash(string(final.RuntimeStatus)), appName)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			what := "build"
@@ -199,8 +208,11 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 		}
 		return err
 	}
-	fmt.Fprintf(out, "Deploy succeeded (runtime: %s).\n", dash(string(res.RuntimeStatus)))
-	return nil
+	return c.result(cmd, res("ok", "app", appName,
+		"action", action,
+		"buildStatus", string(final.BuildStatus),
+		"runtimeStatus", string(final.RuntimeStatus)),
+		"Deploy succeeded (runtime: %s).", dash(string(final.RuntimeStatus)))
 }
 
 // deploymentSource mirrors the (inline, anonymous) App.DeploymentSource shape so
@@ -338,11 +350,8 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 }
 
 func buildNewApp(name string, f *deployFlags) (api.App, error) {
-	if f.plan == "" {
-		return api.App{}, fmt.Errorf("--plan is required to create a new app: list plans with `hostim regions pricing <region>`")
-	}
-	if f.git == "" && f.dockerImage == "" {
-		return api.App{}, fmt.Errorf("provide --git <repo-url> or --docker-image <ref> to create a new app")
+	if err := checkNewAppFlags(name, f); err != nil {
+		return api.App{}, err
 	}
 	app := api.App{
 		Name:     name,
@@ -366,6 +375,39 @@ func buildNewApp(name string, f *deployFlags) (api.App, error) {
 		return api.App{}, err
 	}
 	return app, nil
+}
+
+// checkNewAppFlags reports everything missing before an app can be created, in
+// one error rather than one per re-run. There is no upload from a local
+// directory: the API builds from a git URL it can reach, or runs a docker image,
+// so an unpushed repository has to become one of those first.
+func checkNewAppFlags(name string, f *deployFlags) error {
+	var missing []string
+	var lines []string
+	if f.plan == "" {
+		missing = append(missing, "--plan")
+		lines = append(lines, "  --plan <plan>            list plans with `hostim regions pricing <region>`")
+	}
+	if f.git == "" && f.dockerImage == "" {
+		missing = append(missing, "--git|--docker-image")
+		lines = append(lines, "  --git <url> or --docker-image <ref>\n"+
+			"                           the API builds from a git URL it can reach, or runs a\n"+
+			"                           docker image; a local-only directory has to be pushed\n"+
+			"                           or built and published first")
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return &missingError{
+		Missing: missing,
+		msg: fmt.Sprintf("creating app %q needs:\n%s\n\n"+
+			"An app that also needs a database or a volume is a template, not a deploy:\n"+
+			"  hostim templates apply --id <id> --save stack.yml    a curated stack to copy\n"+
+			"  hostim templates apply --compose docker-compose.yml --save stack.yml\n"+
+			"  hostim templates validate -f stack.yml               offline check, no API calls\n"+
+			"  hostim templates apply -f stack.yml                  create everything, in order",
+			name, strings.Join(lines, "\n")),
+	}
 }
 
 // deployEnv collects the env vars given via --env-file and --env, with --env

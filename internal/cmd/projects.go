@@ -121,8 +121,8 @@ func projectsCreateCmd(c *cli) *cobra.Command {
 			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Created project %q in %s.\n", args[0], region)
-			return nil
+			return c.result(cmd, res("created", "project", args[0], "region", region),
+				"Created project %q in %s.", args[0], region)
 		},
 	}
 	cmd.Flags().StringVar(&region, "region", "", "region to create the project in (required)")
@@ -155,8 +155,7 @@ func projectsRemoveCmd(c *cli) *cobra.Command {
 			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Deleted project %q.\n", args[0])
-			return nil
+			return c.result(cmd, res("deleted", "project", args[0]), "Deleted project %q.", args[0])
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")

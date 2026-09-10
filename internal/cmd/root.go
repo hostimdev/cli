@@ -108,7 +108,7 @@ func Execute() {
 		// errAborted's message was already shown by the confirm helper; other
 		// errors get the "error:" prefix.
 		if !errors.Is(err, errAborted) {
-			fmt.Fprintln(os.Stderr, "error: "+err.Error())
+			reportError(c, os.Stderr, err)
 		}
 		os.Exit(1)
 	}

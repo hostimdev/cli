@@ -209,6 +209,12 @@ func templatesApplyCmd(c *cli) *cobra.Command {
 func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
+	// Under -o json the per-resource progress lines would sit in front of the
+	// result object, so they are dropped and the command answers with a single
+	// summary instead.
+	if c.jsonOut() {
+		out = io.Discard
+	}
 
 	// One source. --id doubles as the entry selector inside a -f file that holds
 	// a list of templates (which is what backend/templates.yml is).
@@ -245,7 +251,11 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 	// re-apply with -f. Validation issues are warned about, not fatal, so a
 	// converted compose file can be saved and then fixed.
 	if f.save != "" {
-		return saveTemplate(out, tmpl, f.save)
+		if err := saveTemplate(out, tmpl, f.save); err != nil {
+			return err
+		}
+		return c.result(cmd, res("saved", "template", tmpl.Name, "file", f.save,
+			"resources", templateResources(tmpl)), "")
 	}
 
 	// Expand GENERATE_ME_<n> secrets now so the plan we show and the names we
@@ -292,7 +302,34 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 		return err
 	}
 
-	return applyTemplate(ctx, out, a, project, tmpl, f.skipExisting, f.wait, f.timeout, f.interval)
+	if err := applyTemplate(ctx, out, a, project, tmpl, f.skipExisting, f.wait, f.timeout, f.interval); err != nil {
+		return err
+	}
+	return c.result(cmd, res("deployed", "template", tmpl.Name, "project", project,
+		"resources", templateResources(tmpl)), "")
+}
+
+// templateResources lists what a template contains as kind/name pairs, for the
+// -o json summary.
+func templateResources(tmpl *api.Template) []map[string]string {
+	out := []map[string]string{}
+	add := func(kind, name string) { out = append(out, map[string]string{"kind": kind, "name": name}) }
+	for _, v := range tmpl.Components.Volumes {
+		add("volume", v.Name)
+	}
+	for _, d := range tmpl.Components.Postgres {
+		add("postgres", d.Name)
+	}
+	for _, d := range tmpl.Components.Mysql {
+		add("mysql", d.Name)
+	}
+	for _, d := range tmpl.Components.Redis {
+		add("redis", d.Name)
+	}
+	for _, app := range tmpl.Components.Apps {
+		add("app", app.Name)
+	}
+	return out
 }
 
 // printPlan lists the resources a template will create, so the user can review

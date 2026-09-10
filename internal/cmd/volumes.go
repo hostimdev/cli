@@ -108,8 +108,7 @@ func volumesCreateCmd(c *cli) *cobra.Command {
 			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Created volume %q.\n", args[0])
-			return nil
+			return c.result(cmd, res("created", "volume", args[0]), "Created volume %q.", args[0])
 		},
 	}
 	cmd.Flags().StringVar(&plan, "plan", "", "volume plan (required)")
@@ -139,8 +138,7 @@ func volumesRemoveCmd(c *cli) *cobra.Command {
 			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Deleted volume %q.\n", args[0])
-			return nil
+			return c.result(cmd, res("deleted", "volume", args[0]), "Deleted volume %q.", args[0])
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")

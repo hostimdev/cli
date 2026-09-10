@@ -65,15 +65,15 @@ func newLoginCmd(c *cli) *cobra.Command {
 			if resp.JSON200 != nil {
 				n = len(*resp.JSON200)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Logged in. Token can see %d project(s).\n", n)
-			return nil
+			return c.result(cmd, res("ok", "login", "", "projects", n),
+				"Logged in. Token can see %d project(s).", n)
 		},
 	}
 	cmd.Flags().StringVar(&tokenFlag, "token-value", "", "provide the token non-interactively instead of prompting")
 	return cmd
 }
 
-func newLogoutCmd(_ *cli) *cobra.Command {
+func newLogoutCmd(c *cli) *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Remove the stored API token",
@@ -87,8 +87,7 @@ func newLogoutCmd(_ *cli) *cobra.Command {
 			if err := config.Save(f); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Logged out.")
-			return nil
+			return c.result(cmd, res("ok", "logout", ""), "Logged out.")
 		},
 	}
 }
@@ -164,8 +163,7 @@ func newUseCmd(c *cli) *cobra.Command {
 				if err := config.Save(f); err != nil {
 					return err
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), "Cleared the default project.")
-				return nil
+				return c.result(cmd, res("cleared", "project", ""), "Cleared the default project.")
 			}
 			// Reject a typo'd name up front rather than persisting a default
 			// that every later command would fail on.
@@ -182,8 +180,7 @@ func newUseCmd(c *cli) *cobra.Command {
 			if err := config.Save(f); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Now using project %q.\n", args[0])
-			return nil
+			return c.result(cmd, res("ok", "project", args[0]), "Now using project %q.", args[0])
 		},
 	}
 	cmd.Flags().BoolVar(&clear, "clear", false, "unset the default project")

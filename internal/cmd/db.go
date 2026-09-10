@@ -203,9 +203,9 @@ func postgresExtensionsAddCmd(c *cli) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Installing %s in %q. Run `hostim db postgres status %s` to see the installed extensions.\n",
+			return c.result(cmd, res("installing", "postgres", name, "extensions", added),
+				"Installing %s in %q. Run `hostim db postgres status %s` to see the installed extensions.",
 				strings.Join(added, ", "), name, name)
-			return nil
 		},
 	}
 }
@@ -331,8 +331,8 @@ func dbCreate(c *cli, engine string, fn func(*cobra.Command, *api.ClientWithResp
 			if err := checkResp(st, body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Created %s database %q.\n", engine, args[0])
-			return nil
+			return c.result(cmd, res("created", engine, args[0], "plan", plan),
+				"Created %s database %q.", engine, args[0])
 		},
 	}
 	cmd.Flags().StringVar(&plan, "plan", "", "database plan (required)")
@@ -361,8 +361,7 @@ func dbRemove(c *cli, engine string, fn func(*cobra.Command, *api.ClientWithResp
 			if err := checkResp(st, body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Deleted %s database %q.\n", engine, args[0])
-			return nil
+			return c.result(cmd, res("deleted", engine, args[0]), "Deleted %s database %q.", engine, args[0])
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
