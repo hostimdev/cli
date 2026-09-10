@@ -70,7 +70,7 @@ func regionsGetCmd(c *cli) *cobra.Command {
 			}
 			r := resp.JSON200
 			if r == nil {
-				return fmt.Errorf("empty response")
+				return errEmptyResponse
 			}
 			rows := [][]string{
 				{"Name", str(r.Name)},

@@ -43,16 +43,34 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
+	var msg string
 	switch {
 	case e.Message != "" && e.Code != "":
-		return fmt.Sprintf("%s (%s)", e.Message, e.Code)
+		msg = fmt.Sprintf("%s (%s)", e.Message, e.Code)
 	case e.Message != "":
-		return e.Message
+		msg = e.Message
 	case e.Code != "":
-		return e.Code
+		msg = e.Code
 	default:
-		return fmt.Sprintf("request failed with status %d", e.Status)
+		msg = fmt.Sprintf("request failed with status %d", e.Status)
 	}
+	if h := statusHint(e.Status); h != "" {
+		return msg + "; " + h
+	}
+	return msg
+}
+
+// statusHint names the fix for the statuses whose cause is always the same,
+// whatever the command was. Every command reports API failures through Check,
+// so this is the only place that has to know.
+func statusHint(status int) string {
+	switch {
+	case status == http.StatusUnauthorized, status == http.StatusForbidden:
+		return "run `hostim login`, or pass --token / set HOSTIM_TOKEN"
+	case status >= 500:
+		return "the API failed, not your request; retry in a moment"
+	}
+	return ""
 }
 
 // Check returns an *APIError if the response status is >= 400, else nil.

@@ -185,7 +185,7 @@ func postgresExtensionsAddCmd(c *cli) *cobra.Command {
 			}
 			pg := getResp.JSON200
 			if pg == nil {
-				return fmt.Errorf("postgres database %q not found", name)
+				return fmt.Errorf("postgres database %q not found; list them with `hostim db postgres ls`", name)
 			}
 
 			var current []string
@@ -318,7 +318,7 @@ func dbCreate(c *cli, engine string, fn func(*cobra.Command, *api.ClientWithResp
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if plan == "" {
-				return fmt.Errorf("--plan is required")
+				return fmt.Errorf("--plan is required: list plans with `hostim regions pricing <region>`")
 			}
 			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {

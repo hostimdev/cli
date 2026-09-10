@@ -141,7 +141,7 @@ func followLogs(cmd *cobra.Command, cl *api.ClientWithResponses, project, app st
 			return err
 		}
 		if status == api.AppStatusBuildStatusFailed {
-			return fmt.Errorf("build failed")
+			return fmt.Errorf("build failed; the reason is in the build log above")
 		}
 		return nil
 	}
@@ -192,13 +192,13 @@ func getApp(cmd *cobra.Command, cl *api.ClientWithResponses, project, app string
 		return nil, err
 	}
 	if resp.StatusCode() == 404 {
-		return nil, fmt.Errorf("app %q not found in this project", app)
+		return nil, fmt.Errorf("app %q not found in this project; list apps with `hostim apps ls`", app)
 	}
 	if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 		return nil, err
 	}
 	if resp.JSON200 == nil {
-		return nil, fmt.Errorf("app %q not found in this project", app)
+		return nil, fmt.Errorf("app %q not found in this project; list apps with `hostim apps ls`", app)
 	}
 	return resp.JSON200, nil
 }

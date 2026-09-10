@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 
 	"github.com/hostimdev/cli/api"
@@ -38,7 +36,7 @@ func statusOne(cmd *cobra.Command, c *cli, a *api.ClientWithResponses, project, 
 	}
 	st := resp.JSON200
 	if st == nil {
-		return fmt.Errorf("empty response")
+		return errEmptyResponse
 	}
 	rows := [][]string{
 		{"App", app},

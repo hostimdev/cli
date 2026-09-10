@@ -71,7 +71,7 @@ func runOverview(cmd *cobra.Command, c *cli, a *api.ClientWithResponses, filter 
 			}
 		}
 		if len(kept) == 0 {
-			return fmt.Errorf("project %q not found", filter)
+			return fmt.Errorf("project %q not found; list projects with `hostim projects ls`", filter)
 		}
 		projects = kept
 	}

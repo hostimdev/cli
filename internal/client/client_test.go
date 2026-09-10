@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,10 +34,23 @@ func TestCheck(t *testing.T) {
 		t.Errorf("message = %q", apiErr.Error())
 	}
 
-	// Non-JSON body falls back to a status-based message.
+	// Non-JSON body falls back to a status-based message, plus the hint for
+	// statuses whose fix is always the same.
 	err = Check(500, []byte("boom"))
-	if err == nil || err.Error() != "request failed with status 500" {
+	if err == nil || err.Error() != "request failed with status 500; the API failed, not your request; retry in a moment" {
 		t.Errorf("fallback message = %v", err)
+	}
+
+	// An auth failure names the command that fixes it, whatever the API said.
+	err = Check(401, []byte(`{"error":"unauthorized","message":"invalid token"}`))
+	if err == nil || !strings.Contains(err.Error(), "hostim login") {
+		t.Errorf("401 message = %v, want a `hostim login` hint", err)
+	}
+
+	// Statuses the user caused are left alone.
+	err = Check(404, []byte(`{"message":"app not found"}`))
+	if err == nil || err.Error() != "app not found" {
+		t.Errorf("404 message = %v, want no hint", err)
 	}
 }
 

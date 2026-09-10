@@ -33,7 +33,7 @@ func domainAddCmd(c *cli) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if app == "" {
-				return fmt.Errorf("--app is required")
+				return fmt.Errorf("--app is required: list apps with `hostim apps ls`")
 			}
 			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
@@ -82,7 +82,7 @@ func domainRemoveCmd(c *cli) *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if app == "" {
-				return fmt.Errorf("--app is required")
+				return fmt.Errorf("--app is required: list apps with `hostim apps ls`")
 			}
 			a, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {

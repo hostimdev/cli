@@ -19,6 +19,10 @@ import (
 // exits non-zero without prefixing it with "error:".
 var errAborted = errors.New("aborted")
 
+// errEmptyResponse covers a 2xx answer with no payload: nothing the user did
+// causes it and no command can continue past it.
+var errEmptyResponse = errors.New("the API returned an empty response; retry, and report it if it keeps happening")
+
 // projectIDPrefix is the prefix of the system-generated project identifiers used
 // as the {projectName} path parameter by the API. Friendly project names are
 // resolved to an ID before nested calls.

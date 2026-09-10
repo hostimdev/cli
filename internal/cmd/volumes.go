@@ -74,7 +74,7 @@ func volumesGetCmd(c *cli) *cobra.Command {
 			}
 			v := resp.JSON200
 			if v == nil {
-				return fmt.Errorf("empty response")
+				return errEmptyResponse
 			}
 			rows := [][]string{
 				{"Name", v.Name}, {"Plan", v.Plan},
@@ -94,7 +94,7 @@ func volumesCreateCmd(c *cli) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if plan == "" {
-				return fmt.Errorf("--plan is required")
+				return fmt.Errorf("--plan is required: list plans with `hostim regions pricing <region>`")
 			}
 			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {

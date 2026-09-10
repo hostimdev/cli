@@ -85,7 +85,7 @@ func appsGetCmd(c *cli) *cobra.Command {
 			}
 			a := resp.JSON200
 			if a == nil {
-				return fmt.Errorf("empty response")
+				return errEmptyResponse
 			}
 			rows := [][]string{
 				{"Name", a.Name},

@@ -83,7 +83,7 @@ func projectsGetCmd(c *cli) *cobra.Command {
 			}
 			p := resp.JSON200
 			if p == nil {
-				return fmt.Errorf("empty response")
+				return errEmptyResponse
 			}
 			rows := [][]string{
 				{"Name", str(p.Name)},
@@ -105,7 +105,7 @@ func projectsCreateCmd(c *cli) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if region == "" {
-				return fmt.Errorf("--region is required")
+				return fmt.Errorf("--region is required: list regions with `hostim regions ls`")
 			}
 			cl, err := c.Client()
 			if err != nil {

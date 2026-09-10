@@ -184,18 +184,18 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 	})
 	if err != nil {
 		if errors.Is(err, client.ErrBuildFailed) {
-			return fmt.Errorf("deploy failed: build did not succeed")
+			return fmt.Errorf("deploy failed: build did not succeed; see `hostim logs %s --build`", appName)
 		}
 		if errors.Is(err, client.ErrDeployFailed) {
-			return fmt.Errorf("deploy failed: app did not become healthy (runtime: %s)",
-				dash(string(res.RuntimeStatus)))
+			return fmt.Errorf("deploy failed: app did not become healthy (runtime: %s); see `hostim logs %s` and `hostim events`",
+				dash(string(res.RuntimeStatus)), appName)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			what := "build"
 			if !expectBuild {
 				what = "app to become healthy"
 			}
-			return fmt.Errorf("timed out after %s waiting for %s", f.timeout, what)
+			return fmt.Errorf("timed out after %s waiting for %s; check `hostim status %s` or raise --timeout", f.timeout, what, appName)
 		}
 		return err
 	}
@@ -339,10 +339,10 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 
 func buildNewApp(name string, f *deployFlags) (api.App, error) {
 	if f.plan == "" {
-		return api.App{}, fmt.Errorf("--plan is required to create a new app")
+		return api.App{}, fmt.Errorf("--plan is required to create a new app: list plans with `hostim regions pricing <region>`")
 	}
 	if f.git == "" && f.dockerImage == "" {
-		return api.App{}, fmt.Errorf("provide --git or --docker-image to create a new app")
+		return api.App{}, fmt.Errorf("provide --git <repo-url> or --docker-image <ref> to create a new app")
 	}
 	app := api.App{
 		Name:     name,

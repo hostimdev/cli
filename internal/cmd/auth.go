@@ -32,7 +32,7 @@ func newLoginCmd(c *cli) *cobra.Command {
 				token = strings.TrimSpace(string(b))
 			}
 			if token == "" {
-				return fmt.Errorf("no token provided")
+				return fmt.Errorf("no token provided: create one in the dashboard at https://console.hostim.dev")
 			}
 
 			// Validate against the resolved API URL before persisting.

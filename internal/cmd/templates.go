@@ -838,9 +838,9 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 		if perr != nil {
 			switch {
 			case errors.Is(perr, client.ErrBuildFailed):
-				return fmt.Errorf("app %q: build failed", app.Name)
+				return fmt.Errorf("app %q: build failed; see `hostim logs %s --build`", app.Name, app.Name)
 			case errors.Is(perr, client.ErrDeployFailed):
-				return fmt.Errorf("app %q: did not become healthy (runtime: %s)", app.Name, dash(string(res.RuntimeStatus)))
+				return fmt.Errorf("app %q: did not become healthy (runtime: %s); see `hostim logs %s`", app.Name, dash(string(res.RuntimeStatus)), app.Name)
 			case errors.Is(perr, context.DeadlineExceeded):
 				return fmt.Errorf("app %q: timed out after %s", app.Name, timeout)
 			default:
@@ -964,7 +964,7 @@ func templatesValidateCmd(c *cli) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if file == "" {
-				return fmt.Errorf("--file is required")
+				return fmt.Errorf("--file is required: pass the template file to validate")
 			}
 			list, err := loadTemplates(file)
 			if err != nil {

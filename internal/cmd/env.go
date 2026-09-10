@@ -31,7 +31,7 @@ func (s *envScope) validate() error {
 		return fmt.Errorf("pass either --app or --global, not both")
 	}
 	if !s.global && s.app == "" {
-		return fmt.Errorf("specify --app <name> or --global")
+		return fmt.Errorf("specify --app <name> (list apps with `hostim apps ls`) or --global")
 	}
 	return nil
 }

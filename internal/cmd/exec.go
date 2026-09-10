@@ -175,7 +175,7 @@ func getProject(ctx context.Context, cl *api.ClientWithResponses, id string) (*a
 		return nil, err
 	}
 	if resp.JSON200 == nil {
-		return nil, fmt.Errorf("empty response")
+		return nil, errEmptyResponse
 	}
 	return resp.JSON200, nil
 }
