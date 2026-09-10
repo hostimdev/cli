@@ -87,7 +87,6 @@ func volumesGetCmd(c *cli) *cobra.Command {
 
 func volumesCreateCmd(c *cli) *cobra.Command {
 	var plan string
-	var sizeMB float32
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a volume",
@@ -100,7 +99,7 @@ func volumesCreateCmd(c *cli) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			body := api2Volume(args[0], plan, sizeMB)
+			body := api.Volume{Name: args[0], Plan: plan}
 			resp, err := cl.CreateVolumeWithResponse(cmd.Context(), project, body)
 			if err != nil {
 				return err
@@ -112,7 +111,6 @@ func volumesCreateCmd(c *cli) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&plan, "plan", "", "volume plan (required)")
-	cmd.Flags().Float32Var(&sizeMB, "size-mb", 0, "volume size in MB")
 	return cmd
 }
 
@@ -143,14 +141,6 @@ func volumesRemoveCmd(c *cli) *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	return cmd
-}
-
-func api2Volume(name, plan string, sizeMB float32) api.Volume {
-	v := api.Volume{Name: name, Plan: plan}
-	if sizeMB > 0 {
-		v.StorageMB = &sizeMB
-	}
-	return v
 }
 
 func storage(mb *float32) string {

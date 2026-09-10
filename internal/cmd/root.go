@@ -41,9 +41,28 @@ func (c *cli) Project() (string, error) {
 }
 
 // Execute builds the command tree and runs it.
-func Execute() {
+func Execute(manual string) {
 	c := &cli{}
+	root := newRootCmd(c, manual)
 
+	if err := root.Execute(); err != nil {
+		// A command that ran something remotely (hostim exec) reports that
+		// program's exit status as ours, with no message of our own.
+		var ee exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
+		// errAborted's message was already shown by the confirm helper; other
+		// errors get the "error:" prefix.
+		if !errors.Is(err, errAborted) {
+			reportError(c, os.Stderr, err)
+		}
+		os.Exit(1)
+	}
+}
+
+// newRootCmd builds the whole command tree.
+func newRootCmd(c *cli, manual string) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "hostim",
 		Short:         "Manage Hostim projects, apps, databases and volumes",
@@ -96,22 +115,9 @@ func Execute() {
 		newVolumesCmd(c),
 		newRegionsCmd(c),
 		newCompletionCmd(),
+		newAgentCmd(manual),
 	)
-
-	if err := root.Execute(); err != nil {
-		// A command that ran something remotely (hostim exec) reports that
-		// program's exit status as ours, with no message of our own.
-		var ee exitError
-		if errors.As(err, &ee) {
-			os.Exit(ee.code)
-		}
-		// errAborted's message was already shown by the confirm helper; other
-		// errors get the "error:" prefix.
-		if !errors.Is(err, errAborted) {
-			reportError(c, os.Stderr, err)
-		}
-		os.Exit(1)
-	}
+	return root
 }
 
 // exitError carries an exit status for the process, in place of an error message.

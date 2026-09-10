@@ -27,12 +27,15 @@ import (
 func newExecCmd(c *cli) *cobra.Command {
 	var identity string
 	var stdin bool
+	var yes bool
 	cmd := &cobra.Command{
 		Use:     "exec <app> [-- <command> [args...]]",
 		Aliases: []string{"shell", "ssh"},
 		Short:   "Run a command or open a shell in an app's container",
 		Long: "Run a command in an app's container, or open an interactive shell when no command is given.\n" +
-			"The connection goes through the project's SSH bastion, so the project needs your public SSH key.\n\n" +
+			"The connection goes through the project's SSH bastion, so the project needs your public SSH key.\n" +
+			"When it does not have it yet, exec offers to add it; pass --yes to add it without asking,\n" +
+			"which is what a script or a CI job needs.\n\n" +
 			"Examples:\n" +
 			"  hostim exec chatwoot                      # interactive shell\n" +
 			"  hostim exec chatwoot -- rails c           # one-off command\n" +
@@ -63,7 +66,7 @@ func newExecCmd(c *cli) *cobra.Command {
 			if p.Region == nil || *p.Region == "" {
 				return fmt.Errorf("project %s has no region", project)
 			}
-			if err := ensureSSHKey(cmd, cl, p, identity); err != nil {
+			if err := ensureSSHKey(cmd, cl, p, identity, yes); err != nil {
 				return err
 			}
 			host, err := bastionHost(cmd.Context(), cl, *p.Region)
@@ -93,6 +96,7 @@ func newExecCmd(c *cli) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&identity, "identity", "i", "", "SSH private key to use (passed to ssh -i)")
 	cmd.Flags().BoolVar(&stdin, "stdin", false, "pipe local stdin into the command (implied when stdin is a terminal)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "authorize the local SSH key on the project without asking")
 	return cmd
 }
 
@@ -196,8 +200,8 @@ func bastionHost(ctx context.Context, cl *api.ClientWithResponses, region string
 
 // ensureSSHKey makes sure the project authorizes the local public key. Without
 // it ssh fails with a bare "Permission denied", and the CLI has no other way to
-// add a key.
-func ensureSSHKey(cmd *cobra.Command, cl *api.ClientWithResponses, p *api.Project, identity string) error {
+// add a key. yes adds the key without the prompt, so exec works unattended.
+func ensureSSHKey(cmd *cobra.Command, cl *api.ClientWithResponses, p *api.Project, identity string, yes bool) error {
 	pub, path, err := localPubKey(identity)
 	if err != nil {
 		if len(p.SshKeys) > 0 {
@@ -209,7 +213,7 @@ func ensureSSHKey(cmd *cobra.Command, cl *api.ClientWithResponses, p *api.Projec
 		return nil
 	}
 	prompt := fmt.Sprintf("Project %s does not authorize %s. Add it to the project's SSH keys?", p.Id, path)
-	if err := confirmYesNo(cmd, prompt, false); err != nil {
+	if err := confirmYesNo(cmd, prompt, yes); err != nil {
 		return err
 	}
 	name := str(p.Name)
