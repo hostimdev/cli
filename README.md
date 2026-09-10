@@ -38,6 +38,7 @@ whole manual without network access.
 - [Template files](#template-files)
 - [Deploy from CI](#deploy-from-ci)
 - [Development](#development)
+- [License](#license)
 
 ## Install
 
@@ -563,3 +564,7 @@ in sync with the deployed API.
 
 This README is the single source for the CLI documentation: it is embedded in
 the binary and printed by `hostim agent`. Edit it here, nowhere else.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
