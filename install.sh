@@ -30,11 +30,24 @@ curl -fsSL "$url" -o "$tmp/${BIN}.tar.gz"
 tar -xzf "$tmp/${BIN}.tar.gz" -C "$tmp"
 
 dest="${PREFIX}/bin"
+mkdir -p "$dest" 2>/dev/null || true
 if [ -w "$dest" ]; then
   install -m 0755 "$tmp/${BIN}" "$dest/${BIN}"
-else
+elif command -v sudo >/dev/null 2>&1; then
   echo "Installing to $dest (needs sudo)..."
   sudo install -m 0755 "$tmp/${BIN}" "$dest/${BIN}"
+else
+  # No write access and no sudo (a plain container, for example): fall back to
+  # a per-user directory rather than failing the install.
+  dest="${HOME}/.local/bin"
+  echo "${PREFIX}/bin is not writable and sudo is not available; installing to $dest instead."
+  mkdir -p "$dest"
+  install -m 0755 "$tmp/${BIN}" "$dest/${BIN}"
 fi
 
-echo "Installed $(command -v ${BIN}). Run 'hostim login' to get started."
+echo "Installed ${dest}/${BIN}."
+case ":${PATH}:" in
+  *":${dest}:"*) ;;
+  *) echo "Note: $dest is not on your PATH. Add it with: export PATH=\"$dest:\$PATH\"" ;;
+esac
+echo "Run '${BIN} login' to get started, or '${BIN} agent' to print the full manual."

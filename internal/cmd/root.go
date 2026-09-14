@@ -64,9 +64,13 @@ func Execute(manual string) {
 // newRootCmd builds the whole command tree.
 func newRootCmd(c *cli, manual string) *cobra.Command {
 	root := &cobra.Command{
-		Use:           "hostim",
-		Short:         "Manage Hostim projects, apps, databases and volumes",
-		Long:          "hostim is the command-line interface to the Hostim cloud platform.\nIt talks to the public REST API at https://api.hostim.dev.",
+		Use:   "hostim",
+		Short: "Manage Hostim projects, apps, databases and volumes",
+		Long: "hostim is the command-line interface to the Hostim cloud platform.\n" +
+			"It talks to the public REST API at https://api.hostim.dev.\n\n" +
+			"Scripting this, or driving it from a coding agent? Run `hostim agent`.\n" +
+			"It prints the complete manual to stdout: install, login, every command\n" +
+			"with a runnable example, JSON output and environment variables.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,
@@ -116,8 +120,23 @@ func newRootCmd(c *cli, manual string) *cobra.Command {
 		newRegionsCmd(c),
 		newCompletionCmd(),
 		newAgentCmd(manual),
+		newVersionCmd(),
 	)
 	return root
+}
+
+// newVersionCmd mirrors --version as a subcommand, because `hostim version` is
+// the first thing most people (and every agent) try.
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the CLI version",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "hostim version %s\n", version)
+			return err
+		},
+	}
 }
 
 // exitError carries an exit status for the process, in place of an error message.

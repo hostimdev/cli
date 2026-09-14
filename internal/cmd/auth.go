@@ -105,7 +105,8 @@ func (c *cli) deviceLogin(cmd *cobra.Command) error {
 	w := cmd.ErrOrStderr()
 	fmt.Fprintf(w, "Open this URL in a browser:\n\n    %s\n\nand enter the code:\n\n    %s\n\n",
 		auth.VerificationUri, auth.UserCode)
-	fmt.Fprintln(w, "Waiting for you to approve the login...")
+	fmt.Fprintln(w, "Waiting for you to approve the login. This command polls until you do,")
+	fmt.Fprintln(w, "then saves the token itself - no need to poll or re-run it yourself.")
 
 	interval := time.Duration(auth.Interval) * time.Second
 	if interval <= 0 {

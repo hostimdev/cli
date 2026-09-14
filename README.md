@@ -35,6 +35,7 @@ whole manual without network access.
   - [regions](#regions)
   - [completion](#completion)
   - [agent](#agent)
+  - [version](#version)
 - [Template files](#template-files)
 - [Deploy from CI](#deploy-from-ci)
 - [Development](#development)
@@ -48,7 +49,10 @@ curl -fsSL https://raw.githubusercontent.com/hostimdev/cli/main/install.sh | sh
 
 The script downloads the release binary for the current OS and architecture
 (Linux and macOS, amd64 and arm64) and installs it into `/usr/local/bin`, using
-`sudo` when that directory is not writable. Set `PREFIX` to install elsewhere:
+`sudo` when that directory is not writable. When it is not writable and `sudo`
+is not installed either — a plain container, for example — the script falls back
+to `~/.local/bin` and tells you if that directory is not on your `PATH`. Set
+`PREFIX` to choose the location yourself:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/hostimdev/cli/main/install.sh | PREFIX=$HOME/.local sh
@@ -65,7 +69,7 @@ make install         # installs into /usr/local/bin (PREFIX to change)
 Check the install:
 
 ```sh
-hostim --version
+hostim version
 ```
 
 ## Log in
@@ -77,8 +81,10 @@ the request in the browser, and the token is saved automatically:
 hostim login
 ```
 
-The browser step does not need a terminal, so an agent can run `hostim login`
-and show you the code. If you already have a token, store it directly instead —
+`hostim login` polls until you approve and saves the token itself, so there is
+no need to write a waiting loop around it or to run it a second time. The
+browser step does not need a terminal, so an agent can run `hostim login` and
+show you the code. If you already have a token, store it directly instead —
 create one in the dashboard at <https://console.hostim.dev>:
 
 ```sh
@@ -479,6 +485,13 @@ The binary embeds this README, so the manual an agent reads is exactly the
 manual shipped with the installed version. Feed it to a coding agent before it
 writes Hostim commands, and the agent stops guessing flags.
 
+### version
+
+```sh
+hostim version          # hostim version v1.2.3
+hostim --version        # same thing
+```
+
 ## Template files
 
 A template file is either one template object or a list of them. Field names
@@ -530,6 +543,50 @@ A git-based app uses this source instead:
 
 `hostim templates validate -f <file>` checks names, plans and deployment
 sources offline, before any resource is created.
+
+### Placeholders in envVars
+
+Two kinds of placeholder are resolved for you, so a template never has to carry
+a hostname or a hand-written secret.
+
+`GENERATE_ME_<n>` is replaced by a fresh random secret of `<n>` characters when
+the template is applied. It is expanded by the CLI, so the value that reaches
+the API is already the real secret:
+
+```yaml
+      envVars:
+        - name: APP_SECRET
+          value: GENERATE_ME_32
+```
+
+`$(NAME)` references another variable present in the container. These are
+expanded at container start, not by the CLI, so `hostim env get` still shows the
+literal `$(...)` text — that is expected, and the app sees the resolved value:
+
+- `$(BUILTIN_DOMAIN)` — the app's built-in hostname, without a scheme
+  (`myapp-abc123.hostim.app`).
+- Managed databases in the same project publish connection variables prefixed
+  with the database's name, upper-cased and with `-` turned into `_`. A Postgres
+  named `main` gives `$(MAIN_POSTGRES_HOST)`, `$(MAIN_POSTGRES_PORT)`,
+  `$(MAIN_POSTGRES_DATABASE)`, `$(MAIN_POSTGRES_USER)`,
+  `$(MAIN_POSTGRES_PASSWORD)`. MySQL uses `_MYSQL_` with the same five fields;
+  Redis uses `$(<NAME>_REDIS_HOST)`, `$(<NAME>_REDIS_PORT)`,
+  `$(<NAME>_REDIS_DB)` and `$(<NAME>_REDIS_PASSWORD)`.
+
+```yaml
+  postgres:
+    - name: main
+      plan: sp-1
+  apps:
+    - name: web
+      envVars:
+        - name: DATABASE_URL
+          value: postgresql://$(MAIN_POSTGRES_USER):$(MAIN_POSTGRES_PASSWORD)@$(MAIN_POSTGRES_HOST):$(MAIN_POSTGRES_PORT)/$(MAIN_POSTGRES_DATABASE)
+        - name: BASE_URL
+          value: https://$(BUILTIN_DOMAIN)
+        - name: SESSION_SECRET
+          value: GENERATE_ME_32
+```
 
 ## Deploy from CI
 
