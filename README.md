@@ -70,10 +70,18 @@ hostim --version
 
 ## Log in
 
-Create an API token in the dashboard at <https://console.hostim.dev>, then:
+`hostim login` uses a device code. It prints a URL and a short code, you approve
+the request in the browser, and the token is saved automatically:
 
 ```sh
-hostim login                      # prompts for the token, input is hidden
+hostim login
+```
+
+The browser step does not need a terminal, so an agent can run `hostim login`
+and show you the code. If you already have a token, store it directly instead —
+create one in the dashboard at <https://console.hostim.dev>:
+
+```sh
 hostim login --token-value "$T"   # non-interactive, for scripts and CI
 ```
 
@@ -156,8 +164,8 @@ Every example below is runnable as written once a token and a project are set.
 ### login, logout, whoami, use
 
 ```sh
-hostim login                          # prompt for a token and validate it
-hostim login --token-value "$TOKEN"   # non-interactive
+hostim login                          # device login: approve a code in the browser
+hostim login --token-value "$TOKEN"   # store an existing API token instead
 hostim logout                         # remove the stored token
 hostim whoami                         # API URL, token source, current project
 hostim whoami -o json

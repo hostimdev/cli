@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
+	"github.com/hostimdev/cli/api"
 	"github.com/hostimdev/cli/internal/client"
 	"github.com/hostimdev/cli/internal/config"
 )
@@ -15,62 +18,139 @@ func newLoginCmd(c *cli) *cobra.Command {
 	var tokenFlag string
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "Store an API token and validate it",
-		Long: "Store a Hostim API token for future commands. Create a token in the\n" +
-			"dashboard, then paste it here (input is hidden). The token is validated\n" +
-			"against the API and saved to ~/.config/hostim/config.yml (mode 0600).",
+		Short: "Log in with a device code, or store an API token",
+		Long: "Log in by device code: the command prints a URL and a short code, you\n" +
+			"approve the request in the browser, and the resulting API token is saved\n" +
+			"to ~/.config/hostim/config.yml (mode 0600). The browser step works without\n" +
+			"a terminal, so an agent can run this and show you the code.\n\n" +
+			"Pass --token-value to store an existing API token instead (create one in\n" +
+			"the dashboard at https://console.hostim.dev).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			token := strings.TrimSpace(tokenFlag)
-			if token == "" {
-				fmt.Fprint(cmd.OutOrStdout(), "API token: ")
-				b, err := term.ReadPassword(0)
-				fmt.Fprintln(cmd.OutOrStdout())
-				if err != nil {
-					return fmt.Errorf("reading token: %w", err)
-				}
-				token = strings.TrimSpace(string(b))
+			if token := strings.TrimSpace(tokenFlag); token != "" {
+				return c.saveValidatedToken(cmd, token)
 			}
-			if token == "" {
-				return fmt.Errorf("no token provided: create one in the dashboard at https://console.hostim.dev")
-			}
-
-			// Validate against the resolved API URL before persisting.
-			r := c.resolved
-			r.Token = token
-			cl, err := client.New(r)
-			if err != nil {
-				return err
-			}
-			resp, err := cl.GetProjectsWithResponse(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("validating token: %w", err)
-			}
-			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
-				return fmt.Errorf("token rejected: %w", err)
-			}
-
-			f, err := config.Load()
-			if err != nil {
-				return err
-			}
-			f.Token = token
-			if c.flagAPIURL != "" {
-				f.APIURL = c.flagAPIURL
-			}
-			if err := config.Save(f); err != nil {
-				return err
-			}
-			n := 0
-			if resp.JSON200 != nil {
-				n = len(*resp.JSON200)
-			}
-			return c.result(cmd, res("ok", "login", "", "projects", n),
-				"Logged in. Token can see %d project(s).", n)
+			return c.deviceLogin(cmd)
 		},
 	}
-	cmd.Flags().StringVar(&tokenFlag, "token-value", "", "provide the token non-interactively instead of prompting")
+	cmd.Flags().StringVar(&tokenFlag, "token-value", "", "store this API token instead of using the device login")
 	return cmd
+}
+
+// saveValidatedToken checks a token against the API before persisting it, so a
+// typo or a revoked token is refused up front rather than failing the next
+// command.
+func (c *cli) saveValidatedToken(cmd *cobra.Command, token string) error {
+	r := c.resolved
+	r.Token = token
+	cl, err := client.New(r)
+	if err != nil {
+		return err
+	}
+	resp, err := cl.GetProjectsWithResponse(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("validating token: %w", err)
+	}
+	if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
+		return fmt.Errorf("token rejected: %w", err)
+	}
+
+	f, err := config.Load()
+	if err != nil {
+		return err
+	}
+	f.Token = token
+	if c.flagAPIURL != "" {
+		f.APIURL = c.flagAPIURL
+	}
+	if err := config.Save(f); err != nil {
+		return err
+	}
+	n := 0
+	if resp.JSON200 != nil {
+		n = len(*resp.JSON200)
+	}
+	return c.result(cmd, res("ok", "login", "", "projects", n),
+		"Logged in. Token can see %d project(s).", n)
+}
+
+// deviceLogin runs the RFC 8628 device-authorization flow: start an
+// authorization, show the code, then poll until the user approves in the
+// browser. The instructions go to stderr so -o json leaves stdout to the single
+// result object.
+func (c *cli) deviceLogin(cmd *cobra.Command) error {
+	anon, err := client.NewAnonymous(c.resolved.APIURL)
+	if err != nil {
+		return err
+	}
+
+	clientName := "hostim CLI"
+	if host, err := os.Hostname(); err == nil && host != "" {
+		clientName = "hostim CLI on " + host
+	}
+
+	resp, err := anon.DeviceAuthorizeWithResponse(cmd.Context(),
+		api.DeviceAuthorizeJSONRequestBody{ClientName: &clientName})
+	if err != nil {
+		return fmt.Errorf("starting device login: %w", err)
+	}
+	if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
+		return err
+	}
+	if resp.JSON200 == nil {
+		return errEmptyResponse
+	}
+	auth := resp.JSON200
+
+	w := cmd.ErrOrStderr()
+	fmt.Fprintf(w, "Open this URL in a browser:\n\n    %s\n\nand enter the code:\n\n    %s\n\n",
+		auth.VerificationUri, auth.UserCode)
+	fmt.Fprintln(w, "Waiting for you to approve the login...")
+
+	interval := time.Duration(auth.Interval) * time.Second
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	deadline := time.Now().Add(time.Duration(auth.ExpiresIn) * time.Second)
+
+	for {
+		select {
+		case <-cmd.Context().Done():
+			return cmd.Context().Err()
+		case <-time.After(interval):
+		}
+
+		tr, err := anon.DeviceTokenWithResponse(cmd.Context(),
+			api.DeviceTokenJSONRequestBody{DeviceCode: auth.DeviceCode})
+		if err != nil {
+			return fmt.Errorf("polling device login: %w", err)
+		}
+		// A failing API is not a failed login: keep polling until the code
+		// itself expires. Anything else (400, 401) is final.
+		if tr.StatusCode() >= 500 {
+			continue
+		}
+		if err := checkResp(tr.StatusCode(), tr.Body); err != nil {
+			return err
+		}
+		if tr.JSON200 == nil {
+			continue
+		}
+		switch tr.JSON200.Status {
+		case api.DeviceTokenResultStatusApproved:
+			if tr.JSON200.Token == nil {
+				return errEmptyResponse
+			}
+			return c.saveValidatedToken(cmd, *tr.JSON200.Token)
+		case api.DeviceTokenResultStatusDenied:
+			return errors.New("device login was denied")
+		case api.DeviceTokenResultStatusExpired:
+			return errors.New("device login expired; run `hostim login` again")
+		}
+		if time.Now().After(deadline) {
+			return errors.New("device login timed out; run `hostim login` again")
+		}
+	}
 }
 
 func newLogoutCmd(c *cli) *cobra.Command {

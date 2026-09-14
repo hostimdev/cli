@@ -35,6 +35,21 @@ func New(r config.Resolved) (*api.ClientWithResponses, error) {
 	return api.NewClientWithResponses(r.APIURL, api.WithHTTPClient(httpClient), auth)
 }
 
+// NewAnonymous returns a client for the endpoints that take no token (the
+// device-login flow), with the same 429 retry behaviour as New. Without it a
+// single rate-limited poll would end a login that is otherwise fine.
+func NewAnonymous(apiURL string) (*api.ClientWithResponses, error) {
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &retryTransport{
+			base:       http.DefaultTransport,
+			maxRetries: 4,
+			maxBackoff: 30 * time.Second,
+		},
+	}
+	return api.NewClientWithResponses(apiURL, api.WithHTTPClient(httpClient))
+}
+
 // APIError is a structured error built from a non-2xx API response.
 type APIError struct {
 	Status  int

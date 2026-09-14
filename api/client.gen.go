@@ -104,6 +104,30 @@ func (e AppStatusRuntimeStatus) Valid() bool {
 	}
 }
 
+// Defines values for DeviceTokenResultStatus.
+const (
+	DeviceTokenResultStatusApproved DeviceTokenResultStatus = "approved"
+	DeviceTokenResultStatusDenied   DeviceTokenResultStatus = "denied"
+	DeviceTokenResultStatusExpired  DeviceTokenResultStatus = "expired"
+	DeviceTokenResultStatusPending  DeviceTokenResultStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the DeviceTokenResultStatus enum.
+func (e DeviceTokenResultStatus) Valid() bool {
+	switch e {
+	case DeviceTokenResultStatusApproved:
+		return true
+	case DeviceTokenResultStatusDenied:
+		return true
+	case DeviceTokenResultStatusExpired:
+		return true
+	case DeviceTokenResultStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EventServiceType.
 const (
 	EventServiceTypeApp      EventServiceType = "app"
@@ -508,6 +532,38 @@ type AppStatusBuildStatus string
 
 // AppStatusRuntimeStatus The runtime status
 type AppStatusRuntimeStatus string
+
+// DeviceAuthorization defines model for DeviceAuthorization.
+type DeviceAuthorization struct {
+	// DeviceCode Secret held by the client; poll /api/users/device/token with it.
+	DeviceCode string `json:"deviceCode"`
+
+	// ExpiresIn Seconds until the authorization expires.
+	ExpiresIn int `json:"expiresIn"`
+
+	// Interval Minimum seconds between polls.
+	Interval int `json:"interval"`
+
+	// UserCode Short code the user types on the approval page.
+	UserCode string `json:"userCode"`
+
+	// VerificationUri Page where the user approves the request.
+	VerificationUri string `json:"verificationUri"`
+
+	// VerificationUriComplete Same page with the user code pre-filled.
+	VerificationUriComplete *string `json:"verificationUriComplete,omitempty"`
+}
+
+// DeviceTokenResult defines model for DeviceTokenResult.
+type DeviceTokenResult struct {
+	Status DeviceTokenResultStatus `json:"status"`
+
+	// Token Bearer API token; present only when status is approved.
+	Token *string `json:"token,omitempty"`
+}
+
+// DeviceTokenResultStatus defines model for DeviceTokenResult.Status.
+type DeviceTokenResultStatus string
 
 // DomainStatus DNS resolution status of one custom domain
 type DomainStatus struct {
@@ -985,6 +1041,17 @@ type ParseDockerComposeJSONBody struct {
 	ComposeYAML string `json:"composeYAML"`
 }
 
+// DeviceAuthorizeJSONBody defines parameters for DeviceAuthorize.
+type DeviceAuthorizeJSONBody struct {
+	// ClientName Human-readable name of the client requesting access.
+	ClientName *string `json:"clientName,omitempty"`
+}
+
+// DeviceTokenJSONBody defines parameters for DeviceToken.
+type DeviceTokenJSONBody struct {
+	DeviceCode string `json:"deviceCode"`
+}
+
 // UpdateProjectJSONRequestBody defines body for UpdateProject for application/json ContentType.
 type UpdateProjectJSONRequestBody = UpdateProjectJSONBody
 
@@ -1032,6 +1099,12 @@ type CreateVolumeJSONRequestBody = Volume
 
 // ParseDockerComposeJSONRequestBody defines body for ParseDockerCompose for application/json ContentType.
 type ParseDockerComposeJSONRequestBody ParseDockerComposeJSONBody
+
+// DeviceAuthorizeJSONRequestBody defines body for DeviceAuthorize for application/json ContentType.
+type DeviceAuthorizeJSONRequestBody DeviceAuthorizeJSONBody
+
+// DeviceTokenJSONRequestBody defines body for DeviceToken for application/json ContentType.
+type DeviceTokenJSONRequestBody DeviceTokenJSONBody
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -1646,6 +1719,42 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/templates/docker-compose (the `ParseDockerCompose` operationId).
 	ParseDockerCompose(ctx context.Context, body ParseDockerComposeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeviceAuthorizeWithBody Start a device authorization
+	//
+	// Starts a device-code login (RFC 8628). The client shows the user code and verification URI to the user, then polls /api/users/device/token until the user approves.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/users/device/authorize (the `DeviceAuthorize` operationId).
+	DeviceAuthorizeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeviceAuthorize Start a device authorization
+	//
+	// Starts a device-code login (RFC 8628). The client shows the user code and verification URI to the user, then polls /api/users/device/token until the user approves.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/users/device/authorize (the `DeviceAuthorize` operationId).
+	DeviceAuthorize(ctx context.Context, body DeviceAuthorizeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeviceTokenWithBody Poll a device authorization
+	//
+	// Polls a device authorization. Returns pending until the user approves, then the API token exactly once.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/users/device/token (the `DeviceToken` operationId).
+	DeviceTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeviceToken Poll a device authorization
+	//
+	// Polls a device authorization. Returns pending until the user approves, then the API token exactly once.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/users/device/token (the `DeviceToken` operationId).
+	DeviceToken(ctx context.Context, body DeviceTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // GetPostgresExtensions Get available PostgreSQL extensions
@@ -3038,6 +3147,82 @@ func (c *Client) ParseDockerComposeWithBody(ctx context.Context, contentType str
 // Corresponds with POST /api/templates/docker-compose (the `ParseDockerCompose` operationId).
 func (c *Client) ParseDockerCompose(ctx context.Context, body ParseDockerComposeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewParseDockerComposeRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeviceAuthorizeWithBody Start a device authorization
+//
+// Starts a device-code login (RFC 8628). The client shows the user code and verification URI to the user, then polls /api/users/device/token until the user approves.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/users/device/authorize (the `DeviceAuthorize` operationId).
+func (c *Client) DeviceAuthorizeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeviceAuthorizeRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeviceAuthorize Start a device authorization
+//
+// Starts a device-code login (RFC 8628). The client shows the user code and verification URI to the user, then polls /api/users/device/token until the user approves.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/users/device/authorize (the `DeviceAuthorize` operationId).
+func (c *Client) DeviceAuthorize(ctx context.Context, body DeviceAuthorizeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeviceAuthorizeRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeviceTokenWithBody Poll a device authorization
+//
+// Polls a device authorization. Returns pending until the user approves, then the API token exactly once.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/users/device/token (the `DeviceToken` operationId).
+func (c *Client) DeviceTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeviceTokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeviceToken Poll a device authorization
+//
+// Polls a device authorization. Returns pending until the user approves, then the API token exactly once.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/users/device/token (the `DeviceToken` operationId).
+func (c *Client) DeviceToken(ctx context.Context, body DeviceTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeviceTokenRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6056,6 +6241,86 @@ func NewParseDockerComposeRequestWithBody(server string, contentType string, bod
 	return req, nil
 }
 
+// NewDeviceAuthorizeRequest calls the generic DeviceAuthorize builder with application/json body
+func NewDeviceAuthorizeRequest(server string, body DeviceAuthorizeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDeviceAuthorizeRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewDeviceAuthorizeRequestWithBody constructs an http.Request for the DeviceAuthorize method, with any body, and a specified content type
+func NewDeviceAuthorizeRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/users/device/authorize")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeviceTokenRequest calls the generic DeviceToken builder with application/json body
+func NewDeviceTokenRequest(server string, body DeviceTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDeviceTokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewDeviceTokenRequestWithBody constructs an http.Request for the DeviceToken method, with any body, and a specified content type
+func NewDeviceTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/users/device/token")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -6747,6 +7012,42 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/templates/docker-compose (the `ParseDockerCompose` operationId).
 	ParseDockerComposeWithResponse(ctx context.Context, body ParseDockerComposeJSONRequestBody, reqEditors ...RequestEditorFn) (*ParseDockerComposeResponse, error)
+
+	// DeviceAuthorizeWithBodyWithResponse Start a device authorization
+	//
+	// Starts a device-code login (RFC 8628). The client shows the user code and verification URI to the user, then polls /api/users/device/token until the user approves.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/users/device/authorize (the `DeviceAuthorize` operationId).
+	DeviceAuthorizeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeviceAuthorizeResponse, error)
+
+	// DeviceAuthorizeWithResponse Start a device authorization
+	//
+	// Starts a device-code login (RFC 8628). The client shows the user code and verification URI to the user, then polls /api/users/device/token until the user approves.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/users/device/authorize (the `DeviceAuthorize` operationId).
+	DeviceAuthorizeWithResponse(ctx context.Context, body DeviceAuthorizeJSONRequestBody, reqEditors ...RequestEditorFn) (*DeviceAuthorizeResponse, error)
+
+	// DeviceTokenWithBodyWithResponse Poll a device authorization
+	//
+	// Polls a device authorization. Returns pending until the user approves, then the API token exactly once.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/users/device/token (the `DeviceToken` operationId).
+	DeviceTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeviceTokenResponse, error)
+
+	// DeviceTokenWithResponse Poll a device authorization
+	//
+	// Polls a device authorization. Returns pending until the user approves, then the API token exactly once.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/users/device/token (the `DeviceToken` operationId).
+	DeviceTokenWithResponse(ctx context.Context, body DeviceTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*DeviceTokenResponse, error)
 }
 
 type GetPostgresExtensionsResponse struct {
@@ -11088,6 +11389,102 @@ func (r ParseDockerComposeResponse) ContentType() string {
 	return ""
 }
 
+type DeviceAuthorizeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DeviceAuthorization
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeviceAuthorizeResponse) GetJSON200() *DeviceAuthorization {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeviceAuthorizeResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeviceAuthorizeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeviceAuthorizeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeviceAuthorizeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeviceAuthorizeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeviceTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DeviceTokenResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeviceTokenResponse) GetJSON200() *DeviceTokenResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeviceTokenResponse) GetJSON400() *GenericMessage {
+	return r.JSON400
+}
+
+// GetBody returns the raw response body bytes
+func (r DeviceTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeviceTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeviceTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeviceTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetPostgresExtensionsWithResponse Get available PostgreSQL extensions
 //
 // Get the PostgreSQL extensions a database may request.
@@ -12250,6 +12647,66 @@ func (c *ClientWithResponses) ParseDockerComposeWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseParseDockerComposeResponse(rsp)
+}
+
+// DeviceAuthorizeWithBodyWithResponse Start a device authorization
+//
+// Starts a device-code login (RFC 8628). The client shows the user code and verification URI to the user, then polls /api/users/device/token until the user approves.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/users/device/authorize (the `DeviceAuthorize` operationId).
+func (c *ClientWithResponses) DeviceAuthorizeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeviceAuthorizeResponse, error) {
+	rsp, err := c.DeviceAuthorizeWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeviceAuthorizeResponse(rsp)
+}
+
+// DeviceAuthorizeWithResponse Start a device authorization
+//
+// Starts a device-code login (RFC 8628). The client shows the user code and verification URI to the user, then polls /api/users/device/token until the user approves.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/users/device/authorize (the `DeviceAuthorize` operationId).
+func (c *ClientWithResponses) DeviceAuthorizeWithResponse(ctx context.Context, body DeviceAuthorizeJSONRequestBody, reqEditors ...RequestEditorFn) (*DeviceAuthorizeResponse, error) {
+	rsp, err := c.DeviceAuthorize(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeviceAuthorizeResponse(rsp)
+}
+
+// DeviceTokenWithBodyWithResponse Poll a device authorization
+//
+// Polls a device authorization. Returns pending until the user approves, then the API token exactly once.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/users/device/token (the `DeviceToken` operationId).
+func (c *ClientWithResponses) DeviceTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeviceTokenResponse, error) {
+	rsp, err := c.DeviceTokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeviceTokenResponse(rsp)
+}
+
+// DeviceTokenWithResponse Poll a device authorization
+//
+// Polls a device authorization. Returns pending until the user approves, then the API token exactly once.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/users/device/token (the `DeviceToken` operationId).
+func (c *ClientWithResponses) DeviceTokenWithResponse(ctx context.Context, body DeviceTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*DeviceTokenResponse, error) {
+	rsp, err := c.DeviceToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeviceTokenResponse(rsp)
 }
 
 // ParseGetPostgresExtensionsResponse parses an HTTP response from a GetPostgresExtensionsWithResponse call
@@ -15532,6 +15989,72 @@ func ParseParseDockerComposeResponse(rsp *http.Response) (*ParseDockerComposeRes
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeviceAuthorizeResponse parses an HTTP response from a DeviceAuthorizeWithResponse call
+func ParseDeviceAuthorizeResponse(rsp *http.Response) (*DeviceAuthorizeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeviceAuthorizeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeviceAuthorization
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeviceTokenResponse parses an HTTP response from a DeviceTokenWithResponse call
+func ParseDeviceTokenResponse(rsp *http.Response) (*DeviceTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeviceTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeviceTokenResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	}
 
