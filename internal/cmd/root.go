@@ -120,6 +120,7 @@ func newRootCmd(c *cli, manual string) *cobra.Command {
 		newRegionsCmd(c),
 		newCompletionCmd(),
 		newAgentCmd(manual),
+		newMCPCmd(c),
 		newVersionCmd(),
 	)
 	return root

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hostimdev/cli/api"
+	"github.com/hostimdev/cli/internal/client"
 )
 
 func newRegionsCmd(c *cli) *cobra.Command {
@@ -70,7 +71,7 @@ func regionsGetCmd(c *cli) *cobra.Command {
 			}
 			r := resp.JSON200
 			if r == nil {
-				return errEmptyResponse
+				return client.ErrEmptyResponse
 			}
 			rows := [][]string{
 				{"Name", str(r.Name)},

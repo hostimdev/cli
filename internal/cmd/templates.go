@@ -685,7 +685,7 @@ func resolveApplyProject(ctx context.Context, out io.Writer, c *cli, a *api.Clie
 			}
 		}
 		if id == "" {
-			id, err = resolveProjectID(ctx, a, f.newProject)
+			id, err = client.ResolveProjectID(ctx, a, f.newProject)
 			if err != nil {
 				return "", fmt.Errorf("project created but could not resolve its ID: %w", err)
 			}
@@ -697,7 +697,7 @@ func resolveApplyProject(ctx context.Context, out io.Writer, c *cli, a *api.Clie
 	if err != nil {
 		return "", fmt.Errorf("%w; or pass --new-project to create one", err)
 	}
-	return resolveProjectID(ctx, a, ref)
+	return client.ResolveProjectID(ctx, a, ref)
 }
 
 // applyTemplate creates every resource in the template, in dependency order
@@ -848,7 +848,7 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 			fmt.Fprintf(out, "app %q ... exists, skipping\n", app.Name)
 			continue
 		}
-		normalizeApp(&app)
+		client.NormalizeApp(&app)
 		if app.Replicas < 1 {
 			app.Replicas = 1
 		}

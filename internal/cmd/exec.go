@@ -13,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/hostimdev/cli/api"
+	"github.com/hostimdev/cli/internal/client"
 )
 
 // exec runs a command in an app's container by going through the project's
@@ -179,7 +180,7 @@ func getProject(ctx context.Context, cl *api.ClientWithResponses, id string) (*a
 		return nil, err
 	}
 	if resp.JSON200 == nil {
-		return nil, errEmptyResponse
+		return nil, client.ErrEmptyResponse
 	}
 	return resp.JSON200, nil
 }

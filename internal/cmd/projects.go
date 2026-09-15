@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hostimdev/cli/api"
+	"github.com/hostimdev/cli/internal/client"
 )
 
 func newProjectsCmd(c *cli) *cobra.Command {
@@ -70,7 +71,7 @@ func projectsGetCmd(c *cli) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			id, err := resolveProjectID(cmd.Context(), cl, args[0])
+			id, err := client.ResolveProjectID(cmd.Context(), cl, args[0])
 			if err != nil {
 				return err
 			}
@@ -83,7 +84,7 @@ func projectsGetCmd(c *cli) *cobra.Command {
 			}
 			p := resp.JSON200
 			if p == nil {
-				return errEmptyResponse
+				return client.ErrEmptyResponse
 			}
 			rows := [][]string{
 				{"Name", str(p.Name)},
@@ -141,7 +142,7 @@ func projectsRemoveCmd(c *cli) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			id, err := resolveProjectID(cmd.Context(), cl, args[0])
+			id, err := client.ResolveProjectID(cmd.Context(), cl, args[0])
 			if err != nil {
 				return err
 			}

@@ -98,7 +98,7 @@ func (c *cli) deviceLogin(cmd *cobra.Command) error {
 		return err
 	}
 	if resp.JSON200 == nil {
-		return errEmptyResponse
+		return client.ErrEmptyResponse
 	}
 	auth := resp.JSON200
 
@@ -140,7 +140,7 @@ func (c *cli) deviceLogin(cmd *cobra.Command) error {
 		switch tr.JSON200.Status {
 		case api.DeviceTokenResultStatusApproved:
 			if tr.JSON200.Token == nil {
-				return errEmptyResponse
+				return client.ErrEmptyResponse
 			}
 			return c.saveValidatedToken(cmd, *tr.JSON200.Token)
 		case api.DeviceTokenResultStatusDenied:
@@ -253,7 +253,7 @@ func newUseCmd(c *cli) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if _, err := resolveProjectID(cmd.Context(), a, args[0]); err != nil {
+				if _, err := client.ResolveProjectID(cmd.Context(), a, args[0]); err != nil {
 					return err
 				}
 			}

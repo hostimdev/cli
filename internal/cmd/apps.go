@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hostimdev/cli/api"
+	"github.com/hostimdev/cli/internal/client"
 )
 
 func newAppsCmd(c *cli) *cobra.Command {
@@ -84,7 +85,7 @@ func appsGetCmd(c *cli) *cobra.Command {
 			}
 			a := resp.JSON200
 			if a == nil {
-				return errEmptyResponse
+				return client.ErrEmptyResponse
 			}
 			rows := [][]string{
 				{"Name", a.Name},

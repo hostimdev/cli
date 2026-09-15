@@ -35,6 +35,7 @@ whole manual without network access.
   - [regions](#regions)
   - [completion](#completion)
   - [agent](#agent)
+  - [mcp](#mcp)
   - [version](#version)
 - [Template files](#template-files)
 - [Deploy from CI](#deploy-from-ci)
@@ -484,6 +485,43 @@ hostim agent > CLI.md
 The binary embeds this README, so the manual an agent reads is exactly the
 manual shipped with the installed version. Feed it to a coding agent before it
 writes Hostim commands, and the agent stops guessing flags.
+
+### mcp
+
+```sh
+hostim mcp                      # Model Context Protocol server on stdio, read-only
+hostim mcp --allow-write        # also expose tools that create, change and delete
+```
+
+`hostim mcp` speaks the Model Context Protocol on stdin/stdout, so a coding
+agent can inspect and provision Hostim resources as tools. It is the same
+binary, the same token and the same public API as every other command.
+
+Read-only tools are always available: `list_projects`, `list_apps`, `get_app`,
+`get_app_status`, `get_app_logs`, `get_app_events`, `list_databases`,
+`get_database_credentials`, `list_volumes`, `list_regions`, `list_templates`
+and `list_region_plans`. Tools that create, change or delete anything —
+projects, apps, databases, volumes, env vars and domains — are only registered
+with `--allow-write`.
+
+Point an MCP client at it. For Claude Desktop, in
+`claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "hostim": {
+      "command": "hostim",
+      "args": ["mcp", "--allow-write"],
+      "env": { "HOSTIM_TOKEN": "your-api-token" }
+    }
+  }
+}
+```
+
+Cursor, VS Code and other MCP clients use the same `command` + `args` shape.
+Because the token comes from the same place as every other command, you can
+also leave `env` out and rely on `hostim login`'s saved token.
 
 ### version
 

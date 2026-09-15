@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hostimdev/cli/api"
+	"github.com/hostimdev/cli/internal/client"
 )
 
 func newStatusCmd(c *cli) *cobra.Command {
@@ -36,7 +37,7 @@ func statusOne(cmd *cobra.Command, c *cli, a *api.ClientWithResponses, project, 
 	}
 	st := resp.JSON200
 	if st == nil {
-		return errEmptyResponse
+		return client.ErrEmptyResponse
 	}
 	rows := [][]string{
 		{"App", app},

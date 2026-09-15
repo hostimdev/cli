@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hostimdev/cli/api"
+	"github.com/hostimdev/cli/internal/client"
 )
 
 func newVolumesCmd(c *cli) *cobra.Command {
@@ -74,7 +75,7 @@ func volumesGetCmd(c *cli) *cobra.Command {
 			}
 			v := resp.JSON200
 			if v == nil {
-				return errEmptyResponse
+				return client.ErrEmptyResponse
 			}
 			rows := [][]string{
 				{"Name", v.Name}, {"Plan", v.Plan},

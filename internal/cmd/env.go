@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hostimdev/cli/api"
+	"github.com/hostimdev/cli/internal/client"
 )
 
 // envScope resolves whether a command targets an app's env or the project-global
@@ -139,7 +140,7 @@ func envSetCmd(c *cli) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			merged := mergeVars(cur, updates)
+			merged := client.MergeVars(cur, updates)
 			if err := s.set(cmd, a, project, merged); err != nil {
 				return err
 			}
@@ -263,7 +264,7 @@ func envPushCmd(c *cli) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				final = mergeVars(cur, loaded)
+				final = client.MergeVars(cur, loaded)
 			}
 			if err := s.set(cmd, a, project, final); err != nil {
 				return err
@@ -313,25 +314,6 @@ func parseEnvFile(path string) ([]api.EnvVar, error) {
 		out = append(out, api.EnvVar{Name: k, Value: v})
 	}
 	return out, sc.Err()
-}
-
-// mergeVars overlays updates onto base, replacing by name and appending new keys.
-func mergeVars(base, updates []api.EnvVar) []api.EnvVar {
-	idx := map[string]int{}
-	out := make([]api.EnvVar, len(base))
-	copy(out, base)
-	for i, v := range out {
-		idx[v.Name] = i
-	}
-	for _, u := range updates {
-		if i, ok := idx[u.Name]; ok {
-			out[i].Value = u.Value
-		} else {
-			idx[u.Name] = len(out)
-			out = append(out, u)
-		}
-	}
-	return out
 }
 
 func sortVars(vars []api.EnvVar) {

@@ -126,7 +126,7 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 			// domains/volumeMounts are required, non-nullable arrays; an app
 			// fetched with none set has them as nil, which marshals to null and
 			// is rejected on PUT. Send [] instead.
-			normalizeApp(&app)
+			client.NormalizeApp(&app)
 			upd, err := a.UpdateAppWithResponse(ctx, project, appName, app)
 			if err != nil {
 				return err
@@ -238,20 +238,6 @@ type dockSource struct {
 	Password *string `json:"password,omitempty"`
 }
 
-// normalizeApp replaces nil required-array fields with empty slices so they
-// serialize as [] rather than null, which the API schema rejects.
-func normalizeApp(app *api.App) {
-	if app.Domains == nil {
-		app.Domains = []string{}
-	}
-	if app.VolumeMounts == nil {
-		app.VolumeMounts = []struct {
-			MountPath *string `json:"mountPath,omitempty"`
-			Name      *string `json:"name,omitempty"`
-		}{}
-	}
-}
-
 // deploymentType reads the "type" discriminator ("git" or "docker") out of an
 // App's inline DeploymentSource via a JSON round-trip.
 func deploymentType(ds any) string {
@@ -313,7 +299,7 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 		changed = true
 	}
 	if len(f.volumes) > 0 {
-		mounts, err := parseVolumeMounts(f.volumes)
+		mounts, err := client.ParseVolumeMounts(f.volumes)
 		if err != nil {
 			return false, err
 		}
@@ -329,7 +315,7 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 		if app.EnvVars != nil {
 			cur = *app.EnvVars
 		}
-		merged := mergeVars(cur, updates)
+		merged := client.MergeVars(cur, updates)
 		app.EnvVars = &merged
 		changed = true
 	}
@@ -364,10 +350,7 @@ func buildNewApp(name string, f *deployFlags) (api.App, error) {
 		app.Domains = []string{}
 	}
 	// volumeMounts is a required array; send [] rather than null on create.
-	app.VolumeMounts = []struct {
-		MountPath *string `json:"mountPath,omitempty"`
-		Name      *string `json:"name,omitempty"`
-	}{}
+	app.VolumeMounts = []client.VolumeMount{}
 	if f.port > 0 {
 		app.HttpPort = &f.port
 	}
@@ -426,30 +409,7 @@ func deployEnv(f *deployFlags) ([]api.EnvVar, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = mergeVars(out, kv)
-	}
-	return out, nil
-}
-
-// parseVolumeMounts turns "name:/mount/path" flag values into App volume mounts.
-func parseVolumeMounts(specs []string) ([]struct {
-	MountPath *string `json:"mountPath,omitempty"`
-	Name      *string `json:"name,omitempty"`
-}, error) {
-	out := make([]struct {
-		MountPath *string `json:"mountPath,omitempty"`
-		Name      *string `json:"name,omitempty"`
-	}, 0, len(specs))
-	for _, s := range specs {
-		name, path, ok := strings.Cut(s, ":")
-		if !ok || name == "" || path == "" {
-			return nil, fmt.Errorf("invalid --volume %q (want name:/mount/path)", s)
-		}
-		n, p := name, path
-		out = append(out, struct {
-			MountPath *string `json:"mountPath,omitempty"`
-			Name      *string `json:"name,omitempty"`
-		}{MountPath: &p, Name: &n})
+		out = client.MergeVars(out, kv)
 	}
 	return out, nil
 }
