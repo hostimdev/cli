@@ -31,16 +31,26 @@ tar -xzf "$tmp/${BIN}.tar.gz" -C "$tmp"
 
 dest="${PREFIX}/bin"
 mkdir -p "$dest" 2>/dev/null || true
+
+# sudo is only usable when it will not stop to ask for a password: piped from
+# curl there is no terminal to type one into, and `sudo: a terminal is required`
+# would fail the whole install for an agent or a CI job.
+can_sudo() {
+  command -v sudo >/dev/null 2>&1 || return 1
+  sudo -n true 2>/dev/null && return 0
+  # No password cached: only worth prompting when someone is watching a terminal.
+  [ -t 1 ]
+}
+
 if [ -w "$dest" ]; then
   install -m 0755 "$tmp/${BIN}" "$dest/${BIN}"
-elif command -v sudo >/dev/null 2>&1; then
-  echo "Installing to $dest (needs sudo)..."
-  sudo install -m 0755 "$tmp/${BIN}" "$dest/${BIN}"
+elif can_sudo && (echo "Installing to $dest (needs sudo)..." && sudo install -m 0755 "$tmp/${BIN}" "$dest/${BIN}"); then
+  :
 else
-  # No write access and no sudo (a plain container, for example): fall back to
-  # a per-user directory rather than failing the install.
+  # Not writable and sudo is unusable (a plain container, a CI job, an agent
+  # piping this script): fall back to a per-user directory rather than failing.
   dest="${HOME}/.local/bin"
-  echo "${PREFIX}/bin is not writable and sudo is not available; installing to $dest instead."
+  echo "${PREFIX}/bin is not writable without a password; installing to $dest instead."
   mkdir -p "$dest"
   install -m 0755 "$tmp/${BIN}" "$dest/${BIN}"
 fi
