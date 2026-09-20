@@ -14,6 +14,16 @@ import (
 	"github.com/hostimdev/cli/internal/config"
 )
 
+// UserAgent is sent on every request so CLI traffic can be told apart from the
+// console in the backend access logs. cmd sets it to the build version.
+var UserAgent = "hostim-cli/dev"
+
+// userAgent is a request editor that stamps UserAgent on outgoing requests.
+func userAgent(_ context.Context, req *http.Request) error {
+	req.Header.Set("User-Agent", UserAgent)
+	return nil
+}
+
 // New returns a ClientWithResponses that injects the Bearer token and
 // transparently retries on 429 responses, honouring Retry-After.
 func New(r config.Resolved) (*api.ClientWithResponses, error) {
@@ -32,7 +42,8 @@ func New(r config.Resolved) (*api.ClientWithResponses, error) {
 		req.Header.Set("Authorization", "Bearer "+r.Token)
 		return nil
 	})
-	return api.NewClientWithResponses(r.APIURL, api.WithHTTPClient(httpClient), auth)
+	return api.NewClientWithResponses(r.APIURL, api.WithHTTPClient(httpClient), auth,
+		api.WithRequestEditorFn(userAgent))
 }
 
 // NewAnonymous returns a client for the endpoints that take no token (the
@@ -47,7 +58,8 @@ func NewAnonymous(apiURL string) (*api.ClientWithResponses, error) {
 			maxBackoff: 30 * time.Second,
 		},
 	}
-	return api.NewClientWithResponses(apiURL, api.WithHTTPClient(httpClient))
+	return api.NewClientWithResponses(apiURL, api.WithHTTPClient(httpClient),
+		api.WithRequestEditorFn(userAgent))
 }
 
 // APIError is a structured error built from a non-2xx API response.

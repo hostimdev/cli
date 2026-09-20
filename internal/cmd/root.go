@@ -43,6 +43,7 @@ func (c *cli) Project() (string, error) {
 // Execute builds the command tree and runs it.
 func Execute(manual string) {
 	c := &cli{}
+	client.UserAgent = "hostim-cli/" + version
 	root := newRootCmd(c, manual)
 
 	if err := root.Execute(); err != nil {
