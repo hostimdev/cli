@@ -59,6 +59,15 @@ to `~/.local/bin` and tells you if that directory is not on your `PATH`. Set
 curl -fsSL https://raw.githubusercontent.com/hostimdev/cli/main/install.sh | PREFIX=$HOME/.local sh
 ```
 
+Some agents and CI policies refuse to pipe a downloaded script into a shell. The
+script is not required — fetch the release binary directly:
+
+```sh
+VERSION=$(curl -fsSL https://api.github.com/repos/hostimdev/cli/releases/latest | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
+curl -fsSL "https://github.com/hostimdev/cli/releases/download/${VERSION}/hostim_linux_amd64.tar.gz" | tar -xz hostim
+install -m 0755 hostim /usr/local/bin/hostim   # or anywhere on your PATH
+```
+
 Build from source instead (Go 1.26+):
 
 ```sh
