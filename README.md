@@ -551,6 +551,11 @@ Point an MCP client at it. For Claude Desktop, in
 ```
 
 Cursor, VS Code and other MCP clients use the same `command` + `args` shape.
+
+Claude Desktop can also install it without the CLI: download
+[`hostim.mcpb`](https://github.com/hostimdev/cli/releases/latest/download/hostim.mcpb)
+from the latest release and open it. Claude Desktop asks for the token and
+whether to allow changes.
 Because the token comes from the same place as every other command, you can
 also leave `env` out and rely on `hostim login`'s saved token.
 

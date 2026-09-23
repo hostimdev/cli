@@ -91,6 +91,24 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.tag }}
 
+      # One MCPB bundle (Claude Desktop, Smithery) with a binary per OS: the
+      # manifest picks linux, darwin (universal) or windows at install time.
+      - name: Build and upload MCPB bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          B=$(mktemp -d)
+          mkdir -p "$B/server/linux" "$B/server/darwin" "$B/server/windows"
+          cp dist/hostim_linux_amd64_v1/hostim "$B/server/linux/"
+          cp dist/hostim_darwin_all/hostim "$B/server/darwin/"
+          cp dist/hostim_windows_amd64_v1/hostim.exe "$B/server/windows/"
+          cp mcpb/icon.png "$B/"
+          jq --arg v "${TAG#v}" '.version = $v' mcpb/manifest.json > "$B/manifest.json"
+          (cd "$B" && zip -qr "$GITHUB_WORKSPACE/hostim.mcpb" .)
+          gh release upload "$TAG" hostim.mcpb
+
       # List this release in the official MCP registry. server.json holds
       # placeholder versions; the real tag is filled in here.
       - name: Publish to MCP registry

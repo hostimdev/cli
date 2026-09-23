@@ -1,0 +1,61 @@
+{
+  "manifest_version": "0.3",
+  "name": "hostim",
+  "display_name": "Hostim",
+  "version": "0.0.0",
+  "description": "Deploy and manage apps, databases, volumes and domains on Hostim, an EU cloud hosting platform.",
+  "long_description": "The official Hostim MCP server, built into the `hostim` CLI. Deploy a Docker image or a Git repository, create managed Postgres, MySQL and Redis, add volumes and custom domains, and read app status, logs and events. Hostim runs on EU bare metal in Falkenstein, Germany. Read-only by default; tools that create, change or delete need write access turned on.",
+  "author": {
+    "name": "Hostim",
+    "url": "https://hostim.dev"
+  },
+  "icon": "icon.png",
+  "homepage": "https://hostim.dev/agents/",
+  "documentation": "https://hostim.dev/docs/cli",
+  "support": "https://github.com/hostimdev/cli/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hostimdev/cli"
+  },
+  "license": "MIT",
+  "keywords": ["hosting", "deploy", "paas", "docker", "postgres", "mysql", "redis", "eu"],
+  "privacy_policies": ["https://hostim.dev/docs/legal/datenschutz"],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/linux/hostim",
+    "mcp_config": {
+      "command": "${__dirname}/server/linux/hostim",
+      "args": ["mcp", "--allow-write=${user_config.allow_write}"],
+      "env": {
+        "HOSTIM_TOKEN": "${user_config.token}"
+      },
+      "platform_overrides": {
+        "darwin": {
+          "command": "${__dirname}/server/darwin/hostim"
+        },
+        "win32": {
+          "command": "${__dirname}/server/windows/hostim.exe"
+        }
+      }
+    }
+  },
+  "tools_generated": true,
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"]
+  },
+  "user_config": {
+    "token": {
+      "type": "string",
+      "title": "API token",
+      "description": "Create one at console.hostim.dev under Account Settings → API Tokens.",
+      "sensitive": true,
+      "required": true
+    },
+    "allow_write": {
+      "type": "boolean",
+      "title": "Allow changes",
+      "description": "Also expose tools that create, change and delete projects, apps, databases, volumes, env vars and domains.",
+      "default": false
+    }
+  }
+}

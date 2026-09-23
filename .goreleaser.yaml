@@ -17,6 +17,12 @@ builds:
     ldflags:
       - -s -w -X github.com/hostimdev/cli/internal/cmd.version={{.Version}}
 
+# One macOS binary for both chips, for the MCPB bundle (an MCPB bundle can pick
+# a binary per OS but not per architecture). The per-arch darwin archives stay,
+# install.sh downloads those.
+universal_binaries:
+  - replace: false
+
 archives:
   - formats: [tar.gz]
     format_overrides:
