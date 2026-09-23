@@ -19,7 +19,8 @@ type BuildResult struct {
 var ErrBuildFailed = errors.New("build failed")
 
 // ErrDeployFailed is returned by PollBuild when a build-less (docker image)
-// deploy cannot become healthy, e.g. the image can't be pulled.
+// deploy cannot become healthy: the image can't be pulled, or the app keeps
+// crashing.
 var ErrDeployFailed = errors.New("deploy failed")
 
 // PollBuild polls an app's status until it reaches a terminal state or the
@@ -31,8 +32,9 @@ var ErrDeployFailed = errors.New("deploy failed")
 //     deploy always runs a build, so the build outcome is the meaningful signal.
 //   - false (docker image source): there is no build phase, so buildStatus stays
 //     empty and the app goes straight to running. Wait for runtimeStatus instead:
-//     running is success, imagePullBackoff is a definitive failure. Transient
-//     states (pending/crashing) keep polling until running or timeout.
+//     running is success, imagePullBackoff is a definitive failure, and a
+//     crash seen on 3 consecutive polls is treated as one too. Other
+//     transient states (pending) keep polling until running or timeout.
 //
 // It returns ErrBuildFailed / ErrDeployFailed (wrapped) on failure so callers
 // can exit non-zero.
@@ -44,6 +46,7 @@ func PollBuild(
 	expectBuild bool,
 	onTick func(*api.AppStatus),
 ) (BuildResult, error) {
+	crashStreak := 0
 	for {
 		resp, err := c.GetAppStatusWithResponse(ctx, project, app)
 		if err != nil {
@@ -72,7 +75,16 @@ func PollBuild(
 					return result(st), nil
 				case api.AppStatusRuntimeStatusImagePullBackoff:
 					return result(st), ErrDeployFailed
+				case api.AppStatusRuntimeStatusCrashing:
+					crashStreak++
+					if crashStreak >= 3 {
+						return result(st), ErrDeployFailed
+					}
+				default:
+					crashStreak = 0
 				}
+			} else {
+				crashStreak = 0
 			}
 		}
 		select {

@@ -197,6 +197,18 @@ func TestPollBuildDocker(t *testing.T) {
 		{"imagePullBackoff", []api.AppStatusRuntimeStatus{
 			api.AppStatusRuntimeStatusPending, api.AppStatusRuntimeStatusImagePullBackoff,
 		}, ErrDeployFailed, api.AppStatusRuntimeStatusImagePullBackoff},
+		{"crashing x3 fails", []api.AppStatusRuntimeStatus{
+			api.AppStatusRuntimeStatusPending,
+			api.AppStatusRuntimeStatusCrashing,
+			api.AppStatusRuntimeStatusCrashing,
+			api.AppStatusRuntimeStatusCrashing,
+		}, ErrDeployFailed, api.AppStatusRuntimeStatusCrashing},
+		{"crash then recovers", []api.AppStatusRuntimeStatus{
+			api.AppStatusRuntimeStatusPending,
+			api.AppStatusRuntimeStatusCrashing,
+			api.AppStatusRuntimeStatusPending,
+			api.AppStatusRuntimeStatusRunning,
+		}, nil, api.AppStatusRuntimeStatusRunning},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
