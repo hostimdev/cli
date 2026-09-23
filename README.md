@@ -507,6 +507,16 @@ The binary embeds this README, so the manual an agent reads is exactly the
 manual shipped with the installed version. Feed it to a coding agent before it
 writes Hostim commands, and the agent stops guessing flags.
 
+For agents that load skills (Claude Code and others), the same knowledge ships
+as a skill: [`skills/hostim/SKILL.md`](skills/hostim/SKILL.md). Put it at
+`.claude/skills/hostim/SKILL.md` in your repository, or let the installer do it:
+
+```sh
+curl -fsSL https://hostim.dev/agent.sh | sh
+```
+
+That installs the CLI, writes the skill and points `AGENTS.md` at it.
+
 ### mcp
 
 ```sh

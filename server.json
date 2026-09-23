@@ -1,0 +1,42 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.hostimdev/hostim",
+  "title": "Hostim",
+  "description": "Deploy and manage apps, databases, volumes and domains on Hostim, an EU cloud hosting platform.",
+  "websiteUrl": "https://hostim.dev/agents/",
+  "repository": {
+    "url": "https://github.com/hostimdev/cli",
+    "source": "github"
+  },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/hostimdev/cli:v0.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
+        {
+          "type": "named",
+          "name": "--allow-write",
+          "description": "Also expose tools that create, change and delete projects, apps, databases, volumes, env vars and domains.",
+          "format": "boolean",
+          "default": "false"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "HOSTIM_TOKEN",
+          "description": "Hostim API token. Create one in the console under Account Settings → API Tokens.",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

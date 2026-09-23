@@ -25,6 +25,12 @@ archives:
     name_template: >-
       {{ .ProjectName }}_{{ .Os }}_{{ .Arch }}
 
+# Image for the MCP registry, which lists stdio servers by package, not by a
+# bare binary. The label in the Dockerfile proves ownership of the server name.
+dockers_v2:
+  - images: [ghcr.io/hostimdev/cli]
+    tags: ["{{ .Tag }}", latest]
+
 checksum:
   name_template: checksums.txt
 
