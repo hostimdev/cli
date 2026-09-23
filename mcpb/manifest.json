@@ -18,14 +18,28 @@
     "url": "https://github.com/hostimdev/cli"
   },
   "license": "MIT",
-  "keywords": ["hosting", "deploy", "paas", "docker", "postgres", "mysql", "redis", "eu"],
-  "privacy_policies": ["https://hostim.dev/docs/legal/datenschutz"],
+  "keywords": [
+    "hosting",
+    "deploy",
+    "paas",
+    "docker",
+    "postgres",
+    "mysql",
+    "redis",
+    "eu"
+  ],
+  "privacy_policies": [
+    "https://hostim.dev/docs/legal/datenschutz"
+  ],
   "server": {
     "type": "binary",
     "entry_point": "server/linux/hostim",
     "mcp_config": {
       "command": "${__dirname}/server/linux/hostim",
-      "args": ["mcp", "--allow-write=${user_config.allow_write}"],
+      "args": [
+        "mcp",
+        "--allow-write=${user_config.allow_write}"
+      ],
       "env": {
         "HOSTIM_TOKEN": "${user_config.token}"
       },
@@ -41,7 +55,11 @@
   },
   "tools_generated": true,
   "compatibility": {
-    "platforms": ["darwin", "win32", "linux"]
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ]
   },
   "user_config": {
     "token": {
@@ -57,5 +75,111 @@
       "description": "Also expose tools that create, change and delete projects, apps, databases, volumes, env vars and domains.",
       "default": false
     }
-  }
+  },
+  "tools": [
+    {
+      "name": "add_app_domain",
+      "description": "Attach a custom domain to an app. The domain then needs a DNS record pointing at the region ingress; check it with the CLI or the console."
+    },
+    {
+      "name": "create_app",
+      "description": "Create an app in a project and start its first build. The app is built from a git repository the Hostim API clones, or from a published docker image. Poll get_app_status until the build finishes."
+    },
+    {
+      "name": "create_database",
+      "description": "Create a MySQL, Postgres or Redis database in a project."
+    },
+    {
+      "name": "create_project",
+      "description": "Create a new project in a region. A project is the container every app, database and volume lives in."
+    },
+    {
+      "name": "create_volume",
+      "description": "Create a storage volume in a project, to mount into an app."
+    },
+    {
+      "name": "delete_app",
+      "description": "Delete an app. This cannot be undone."
+    },
+    {
+      "name": "delete_database",
+      "description": "Delete a MySQL, Postgres or Redis database. The data is destroyed and cannot be recovered."
+    },
+    {
+      "name": "delete_project",
+      "description": "Delete a project and everything in it. This cannot be undone."
+    },
+    {
+      "name": "delete_volume",
+      "description": "Delete a storage volume. The data is destroyed and cannot be recovered."
+    },
+    {
+      "name": "get_app",
+      "description": "Show one app's configuration: plan, replicas, port, domains, env vars, volumes and deployment source."
+    },
+    {
+      "name": "get_app_events",
+      "description": "Read Kubernetes events for an app, most recent first. Use this to find out why an app is not starting."
+    },
+    {
+      "name": "get_app_logs",
+      "description": "Read recent logs for an app: the stdout stream for runtime output, or the build stream to debug a failed build."
+    },
+    {
+      "name": "get_app_status",
+      "description": "Show an app's build status, runtime status and internal DNS name. Poll this after creating or rebuilding an app."
+    },
+    {
+      "name": "get_database_credentials",
+      "description": "Show the connection credentials for a database: host, port, user, password and database name."
+    },
+    {
+      "name": "list_apps",
+      "description": "List the apps in a project."
+    },
+    {
+      "name": "list_databases",
+      "description": "List the MySQL, Postgres and Redis databases in a project."
+    },
+    {
+      "name": "list_projects",
+      "description": "List every Hostim project in the account, with its ID, region, deployed service count and projected monthly cost."
+    },
+    {
+      "name": "list_region_plans",
+      "description": "List the valid plan names and prices in a region for apps, volumes, mysql, postgres and redis. Use a plan name from here when creating a resource."
+    },
+    {
+      "name": "list_regions",
+      "description": "List the region names apps and databases can be deployed to."
+    },
+    {
+      "name": "list_templates",
+      "description": "List the curated deployment templates (app + databases + volumes) that can be applied to a project."
+    },
+    {
+      "name": "list_volumes",
+      "description": "List the storage volumes in a project."
+    },
+    {
+      "name": "rebuild_app",
+      "description": "Trigger a new build of an app from its deployment source. Poll get_app_status until it finishes."
+    },
+    {
+      "name": "restart_app",
+      "description": "Restart a running app without rebuilding it."
+    },
+    {
+      "name": "set_app_env",
+      "description": "Set or overwrite app environment variables. Variables not listed are kept. The app needs a rebuild or restart to pick them up."
+    },
+    {
+      "name": "unset_app_env",
+      "description": "Remove app environment variables by name. The app needs a rebuild or restart to pick the change up."
+    },
+    {
+      "name": "update_app",
+      "description": "Change an app's plan, replica count, HTTP port, visibility, health-check path or command override. Fields left out are unchanged; the deployment source cannot be changed here."
+    }
+  ]
 }
