@@ -393,6 +393,15 @@ hostim db postgres extensions ls              # what a database can request (ali
 hostim db postgres extensions add main postgis pg_trgm
 ```
 
+Load a plain-SQL dump (`pg_dump --format=plain`). It goes through the project's
+SSH bastion into `psql`, stops at the first error and exits non-zero. Like
+`exec`, it offers to authorize your SSH key; `-y` adds it without asking.
+
+```sh
+hostim db postgres import main -f dump.sql
+hostim db postgres import main -y < dump.sql
+```
+
 Read the credentials into an app's environment in one step:
 
 ```sh

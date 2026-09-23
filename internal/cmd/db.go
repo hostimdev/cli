@@ -2,13 +2,18 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/hostimdev/cli/api"
 )
@@ -114,6 +119,7 @@ func postgresCmd(c *cli) *cobra.Command {
 			return firstNonError(resp.JSON200, resp.StatusCode(), resp.Body, err)
 		}),
 		postgresExtensionsCmd(c),
+		postgresImportCmd(c),
 	)
 	return cmd
 }
@@ -208,6 +214,103 @@ func postgresExtensionsAddCmd(c *cli) *cobra.Command {
 				strings.Join(added, ", "), name, name)
 		},
 	}
+}
+
+// postgresImportCmd restores a plain-SQL dump. Databases are only reachable
+// from inside the project, so the dump goes through the project's bastion,
+// which has psql. The password is sent as the first line of the stream rather
+// than on a command line, where it would show up in process listings.
+func postgresImportCmd(c *cli) *cobra.Command {
+	var file, identity string
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "import <name>",
+		Short: "Load a plain-SQL dump into a Postgres database",
+		Long: "Load a plain-SQL dump (pg_dump --format=plain) into a Postgres database.\n" +
+			"The dump is streamed through the project's SSH bastion into psql, which stops at\n" +
+			"the first error. The project needs your public SSH key; import offers to add it,\n" +
+			"and --yes adds it without asking.\n\n" +
+			"Examples:\n" +
+			"  hostim db postgres import main -f dump.sql\n" +
+			"  hostim db postgres import main -y < dump.sql",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var src io.Reader = os.Stdin
+			if file != "" {
+				f, err := os.Open(file)
+				if err != nil {
+					return err
+				}
+				defer f.Close()
+				src = f
+			} else if term.IsTerminal(int(os.Stdin.Fd())) {
+				return fmt.Errorf("no dump given: pass -f <file> or pipe it in")
+			}
+
+			sshBin, err := exec.LookPath("ssh")
+			if err != nil {
+				return fmt.Errorf("ssh not found in PATH; hostim db postgres import needs the OpenSSH client")
+			}
+			cl, project, err := c.clientAndProject(cmd.Context())
+			if err != nil {
+				return err
+			}
+			credResp, err := cl.GetPostgresCredentialsWithResponse(cmd.Context(), project, args[0])
+			if err != nil {
+				return err
+			}
+			if err := checkResp(credResp.StatusCode(), credResp.Body); err != nil {
+				return err
+			}
+			if credResp.JSON200 == nil {
+				return fmt.Errorf("postgres database %q not found; list them with `hostim db postgres ls`", args[0])
+			}
+			p, err := getProject(cmd.Context(), cl, project)
+			if err != nil {
+				return err
+			}
+			if p.Region == nil || *p.Region == "" {
+				return fmt.Errorf("project %s has no region", project)
+			}
+			host, err := bastionHost(cmd.Context(), cl, *p.Region)
+			if err != nil {
+				return err
+			}
+			if err := ensureSSHKey(cmd, cl, p, identity, yes, sshBin, host); err != nil {
+				return err
+			}
+
+			cr := credResp.JSON200
+			run := exec.CommandContext(cmd.Context(), sshBin, pgImportSSHArgs(host, p.Id, identity, cr)...)
+			run.Stdin = io.MultiReader(strings.NewReader(cr.Password+"\n"), src)
+			// psql prints the rows of any SELECT in the dump (pg_dump files always
+			// have one). They go to stderr so stdout carries only the result.
+			run.Stdout, run.Stderr = cmd.ErrOrStderr(), cmd.ErrOrStderr()
+			if err := run.Run(); err != nil {
+				var ee *exec.ExitError
+				if errors.As(err, &ee) {
+					// psql (or ssh) already printed the reason.
+					return exitError{code: ee.ExitCode()}
+				}
+				return err
+			}
+			return c.result(cmd, res("imported", "postgres", args[0]), "Imported the dump into %q.", args[0])
+		},
+	}
+	cmd.Flags().StringVarP(&file, "file", "f", "", "SQL dump to load (default: stdin)")
+	cmd.Flags().StringVarP(&identity, "identity", "i", "", "SSH private key to use (passed to ssh -i)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "authorize the local SSH key on the project without asking")
+	return cmd
+}
+
+// pgImportSSHArgs builds the ssh invocation for an import. The remote shell
+// reads the password from the first line of stdin, then hands the rest to psql.
+func pgImportSSHArgs(host, projectID, identity string, cr *api.PostgresCredentials) []string {
+	args, host := sshTarget(host, identity)
+	remote := "IFS= read -r PGPASSWORD && export PGPASSWORD && exec psql -X -q -v ON_ERROR_STOP=1" +
+		" -h " + shellQuote(cr.Hostname) + " -p " + shellQuote(cr.Port) +
+		" -U " + shellQuote(cr.Username) + " -d " + shellQuote(cr.Database)
+	return append(args, "-T", "-l", projectID, host, remote)
 }
 
 // union appends the names of b missing from a, keeping the order in which the

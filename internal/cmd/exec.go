@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -67,11 +68,11 @@ func newExecCmd(c *cli) *cobra.Command {
 			if p.Region == nil || *p.Region == "" {
 				return fmt.Errorf("project %s has no region", project)
 			}
-			if err := ensureSSHKey(cmd, cl, p, identity, yes); err != nil {
-				return err
-			}
 			host, err := bastionHost(cmd.Context(), cl, *p.Region)
 			if err != nil {
+				return err
+			}
+			if err := ensureSSHKey(cmd, cl, p, identity, yes, sshBin, host); err != nil {
 				return err
 			}
 
@@ -105,14 +106,7 @@ func newExecCmd(c *cli) *cobra.Command {
 // bastion's `shell` helper; a command is quoted so the login shell passes it
 // through unchanged.
 func buildSSHArgs(host, projectID, identity, app string, remote []string, stdin bool) []string {
-	args := []string{}
-	if identity != "" {
-		args = append(args, "-i", identity)
-	}
-	if h, port, ok := splitHostPort(host); ok {
-		host = h
-		args = append(args, "-p", port)
-	}
+	args, host := sshTarget(host, identity)
 	if len(remote) == 0 {
 		// Force a pty: ssh does not allocate one when a command is given, and an
 		// interactive shell needs it.
@@ -136,6 +130,20 @@ func buildSSHArgs(host, projectID, identity, app string, remote []string, stdin 
 		}
 	}
 	return append(args, shellCmd)
+}
+
+// sshTarget returns the ssh options that pick the key and port, and the bare
+// host to connect to.
+func sshTarget(host, identity string) ([]string, string) {
+	args := []string{}
+	if identity != "" {
+		args = append(args, "-i", identity)
+	}
+	if h, port, ok := splitHostPort(host); ok {
+		host = h
+		args = append(args, "-p", port)
+	}
+	return args, host
 }
 
 // splitHostPort splits "host:port" as configured for a region. A bare hostname
@@ -200,9 +208,10 @@ func bastionHost(ctx context.Context, cl *api.ClientWithResponses, region string
 }
 
 // ensureSSHKey makes sure the project authorizes the local public key. Without
-// it ssh fails with a bare "Permission denied", and the CLI has no other way to
-// add a key. yes adds the key without the prompt, so exec works unattended.
-func ensureSSHKey(cmd *cobra.Command, cl *api.ClientWithResponses, p *api.Project, identity string, yes bool) error {
+// it ssh fails with a bare "Permission denied". yes adds the key without the
+// prompt, so exec works unattended. A newly added key reaches the bastion only
+// after a delay, so it then waits until the bastion accepts it.
+func ensureSSHKey(cmd *cobra.Command, cl *api.ClientWithResponses, p *api.Project, identity string, yes bool, sshBin, host string) error {
 	pub, path, err := localPubKey(identity)
 	if err != nil {
 		if len(p.SshKeys) > 0 {
@@ -229,8 +238,30 @@ func ensureSSHKey(cmd *cobra.Command, cl *api.ClientWithResponses, p *api.Projec
 	if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "Added %s to project %s. The bastion may need a few seconds to pick it up.\n", path, p.Id)
-	return nil
+	fmt.Fprintf(cmd.ErrOrStderr(), "Added %s to project %s. Waiting for the bastion to pick it up...\n", path, p.Id)
+	return waitForBastionKey(cmd.Context(), sshBin, host, p.Id, identity)
+}
+
+// waitForBastionKey runs a no-op over ssh until the bastion lets the key in.
+// accept-new records the bastion's host key on first contact, which the
+// following ssh call needs anyway and cannot ask for without a terminal.
+func waitForBastionKey(ctx context.Context, sshBin, host, projectID, identity string) error {
+	args, h := sshTarget(host, identity)
+	args = append(args, "-n", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-l", projectID, h, "true")
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		if exec.CommandContext(ctx, sshBin, args...).Run() == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the bastion still rejects the new SSH key after 2 minutes; retry in a minute")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 // localPubKey returns the public key to authorize: the one next to --identity if

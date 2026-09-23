@@ -105,6 +105,7 @@ Private repositories take `--git-token`; a private registry takes `--registry`,
 - **Databases are not containers.** `hostim db postgres|mysql|redis create`
   makes a managed instance; the app reads its credentials through
   `$(NAME_POSTGRES_HOST)`-style references rather than a hardcoded password.
+  Restore a plain-SQL dump with `hostim db postgres import main -f dump.sql -y`.
 
 ## A stack, not a single app
 
