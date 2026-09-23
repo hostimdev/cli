@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -227,9 +228,11 @@ func postgresImportCmd(c *cli) *cobra.Command {
 		Use:   "import <name>",
 		Short: "Load a plain-SQL dump into a Postgres database",
 		Long: "Load a plain-SQL dump (pg_dump --format=plain) into a Postgres database.\n" +
-			"The dump is streamed through the project's SSH bastion into psql, which stops at\n" +
-			"the first error. The project needs your public SSH key; import offers to add it,\n" +
-			"and --yes adds it without asking.\n\n" +
+			"The dump is streamed through the project's SSH bastion into psql. SQL errors are\n" +
+			"printed but do not stop the import: dumps from other hosts carry a few harmless\n" +
+			"ones (event triggers, extension owners, unknown settings). It exits non-zero only\n" +
+			"when psql cannot run the dump at all, e.g. it cannot connect. The project needs\n" +
+			"your public SSH key; import offers to add it, and --yes adds it without asking.\n\n" +
 			"Examples:\n" +
 			"  hostim db postgres import main -f dump.sql\n" +
 			"  hostim db postgres import main -y < dump.sql",
@@ -285,7 +288,8 @@ func postgresImportCmd(c *cli) *cobra.Command {
 			run.Stdin = io.MultiReader(strings.NewReader(cr.Password+"\n"), src)
 			// psql prints the rows of any SELECT in the dump (pg_dump files always
 			// have one). They go to stderr so stdout carries only the result.
-			run.Stdout, run.Stderr = cmd.ErrOrStderr(), cmd.ErrOrStderr()
+			errs := &errorCounter{w: cmd.ErrOrStderr()}
+			run.Stdout, run.Stderr = cmd.ErrOrStderr(), errs
 			if err := run.Run(); err != nil {
 				var ee *exec.ExitError
 				if errors.As(err, &ee) {
@@ -294,7 +298,11 @@ func postgresImportCmd(c *cli) *cobra.Command {
 				}
 				return err
 			}
-			return c.result(cmd, res("imported", "postgres", args[0]), "Imported the dump into %q.", args[0])
+			if errs.n > 0 {
+				return c.result(cmd, res("imported", "postgres", args[0], "sqlErrors", errs.n),
+					"Imported the dump into %q with %d SQL errors (shown above). Check them; the rest of the dump was applied.", args[0], errs.n)
+			}
+			return c.result(cmd, res("imported", "postgres", args[0], "sqlErrors", 0), "Imported the dump into %q.", args[0])
 		},
 	}
 	cmd.Flags().StringVarP(&file, "file", "f", "", "SQL dump to load (default: stdin)")
@@ -307,10 +315,23 @@ func postgresImportCmd(c *cli) *cobra.Command {
 // reads the password from the first line of stdin, then hands the rest to psql.
 func pgImportSSHArgs(host, projectID, identity string, cr *api.PostgresCredentials) []string {
 	args, host := sshTarget(host, identity)
-	remote := "IFS= read -r PGPASSWORD && export PGPASSWORD && exec psql -X -q -v ON_ERROR_STOP=1" +
+	remote := "IFS= read -r PGPASSWORD && export PGPASSWORD && exec psql -X -q" +
 		" -h " + shellQuote(cr.Hostname) + " -p " + shellQuote(cr.Port) +
 		" -U " + shellQuote(cr.Username) + " -d " + shellQuote(cr.Database)
 	return append(args, "-T", "-l", projectID, host, remote)
+}
+
+// errorCounter passes psql's stderr through and counts the SQL errors in it.
+// ponytail: counts per write, so an "ERROR:" split across two writes is missed;
+// psql writes whole lines, so this does not happen in practice.
+type errorCounter struct {
+	w io.Writer
+	n int
+}
+
+func (e *errorCounter) Write(b []byte) (int, error) {
+	e.n += bytes.Count(b, []byte("ERROR:  "))
+	return e.w.Write(b)
 }
 
 // union appends the names of b missing from a, keeping the order in which the

@@ -394,8 +394,11 @@ hostim db postgres extensions add main postgis pg_trgm
 ```
 
 Load a plain-SQL dump (`pg_dump --format=plain`). It goes through the project's
-SSH bastion into `psql`, stops at the first error and exits non-zero. Like
-`exec`, it offers to authorize your SSH key; `-y` adds it without asking.
+SSH bastion into `psql`. SQL errors are printed and counted but do not stop the
+import, because dumps from other hosts carry a few harmless ones (event
+triggers, extension owners, unknown settings). It exits non-zero only when psql
+cannot run the dump at all, for example when it cannot connect. Like `exec`, it
+offers to authorize your SSH key; `-y` adds it without asking.
 
 ```sh
 hostim db postgres import main -f dump.sql
