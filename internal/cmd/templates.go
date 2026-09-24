@@ -350,8 +350,17 @@ func printPlan(out io.Writer, tmpl *api.Template, target string) {
 	}
 	for i := range tmpl.Components.Apps {
 		app := tmpl.Components.Apps[i]
-		fmt.Fprintf(out, "  app       %s (%s, plan %s%s)\n", app.Name, describeSource(&app), app.Plan, portSuffix(app.HttpPort))
+		fmt.Fprintf(out, "  app       %s (%s, plan %s%s%s)\n", app.Name, describeSource(&app), app.Plan, portSuffix(app.HttpPort), domainsSuffix(app.Domains))
 	}
+}
+
+// domainsSuffix renders the app's custom domains on the plan line, so the user
+// sees which domains the apply will try to claim before confirming.
+func domainsSuffix(domains []string) string {
+	if len(domains) == 0 {
+		return ""
+	}
+	return ", domains: " + strings.Join(domains, ", ")
 }
 
 // appSourceIncomplete reports whether an app lacks a usable deployment source:
@@ -842,12 +851,22 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 		fmt.Fprintln(out, "ready")
 	}
 
+	// Custom domains are attached only after every resource exists: claiming a
+	// domain inside the app create would fail the whole create when the domain
+	// is already held by another project (e.g. the export source), leaving the
+	// databases half-deployed.
+	var pending []pendingDomain
+
 	for _, app := range comps.Apps {
 		app := app
 		if skipExisting && existing.apps[app.Name] {
 			fmt.Fprintf(out, "app %q ... exists, skipping\n", app.Name)
 			continue
 		}
+		for _, d := range app.Domains {
+			pending = append(pending, pendingDomain{app: app.Name, domain: d})
+		}
+		app.Domains = nil
 		client.NormalizeApp(&app)
 		if app.Replicas < 1 {
 			app.Replicas = 1
@@ -887,7 +906,42 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 		fmt.Fprintln(out, "running")
 	}
 
+	domainErr := addAppDomains(ctx, out, pending, func(ctx context.Context, app, domain string) error {
+		resp, err := a.AddDomainWithResponse(ctx, project, app, domain)
+		if err != nil {
+			return err
+		}
+		return checkResp(resp.StatusCode(), resp.Body)
+	})
 	fmt.Fprintf(out, "\nDeployed %q into %s.\n", tmpl.Name, project)
+	return domainErr
+}
+
+// pendingDomain is a custom domain to attach after its app was created, so a
+// domain already held by another project cannot sink the app create.
+type pendingDomain struct {
+	app    string
+	domain string
+}
+
+// addAppDomains attaches every pending custom domain. A failing domain is
+// reported with the backend error and skipped, so the rest of the template is
+// still deployed; the caller gets one error counting what is missing.
+func addAppDomains(ctx context.Context, out io.Writer, pending []pendingDomain, add func(ctx context.Context, app, domain string) error) error {
+	var failed []string
+	for _, pd := range pending {
+		fmt.Fprintf(out, "domain %q on app %q ... ", pd.domain, pd.app)
+		if err := add(ctx, pd.app, pd.domain); err != nil {
+			fmt.Fprintf(out, "failed: %v\n", err)
+			failed = append(failed, pd.domain)
+			continue
+		}
+		fmt.Fprintln(out, "added")
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("%d of %d custom domains were not added; the rest of the template is deployed. Add them later with: hostim domain add <domain> --app <app>",
+			len(failed), len(pending))
+	}
 	return nil
 }
 

@@ -197,9 +197,20 @@ hostim projects ls                            # aliases: project, proj; ls | lis
 hostim projects get my-project
 hostim projects create my-project --region eu-center
 hostim projects rm my-project -y
+hostim projects export -p prod -f prod.yml    # template YAML for `templates apply`
+hostim projects export -p prod -o json        # template as JSON on stdout
 ```
 
 `--region` is required on create; see `hostim regions ls` for the values.
+
+`projects export` writes a desired-state template, not a backup: volume and
+database contents (data) are not exported. Costs, IDs, built-in domains and
+unused source blocks are stripped, and env var values are exported RAW — the
+file holds secrets (passwords, API keys), so store and share it like a
+password file. Docker registry passwords and git tokens are not readable
+through the API and are left out (registry usernames are kept); set them
+again after applying.
+Redeploy with `hostim templates apply -f prod.yml --new-project prod-clone`.
 
 ### deploy
 
@@ -459,6 +470,11 @@ hostim templates apply -f templates.yml --id freshrss
 (`-y` skips it). If any resource already exists in the target project it aborts
 before creating anything, so it never overwrites a configured or scaled
 resource; `--skip-existing` creates only what is missing.
+
+Custom domains from the template are attached only after all resources are up:
+a domain already held by another project (for example the project a template
+was exported from) is reported per-domain and the rest of the apply still
+succeeds — add it later with `hostim domain add <domain> --app <app>`.
 
 Flags for `apply`:
 

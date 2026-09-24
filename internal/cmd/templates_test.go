@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
+	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -264,6 +267,44 @@ func TestTemplateToYAMLRoundTrip(t *testing.T) {
 	// The GENERATE_ME placeholder must survive so apply regenerates the secret.
 	if (*got.Components.Apps[0].EnvVars)[0].Value != "GENERATE_ME_32" {
 		t.Errorf("placeholder not preserved: %q", (*got.Components.Apps[0].EnvVars)[0].Value)
+	}
+}
+
+func TestAddAppDomains(t *testing.T) {
+	var calls []string
+	add := func(_ context.Context, app, domain string) error {
+		calls = append(calls, app+" "+domain)
+		if domain == "bad.example.com" {
+			return errors.New("domain already belongs to another project")
+		}
+		return nil
+	}
+	var out bytes.Buffer
+	pending := []pendingDomain{
+		{app: "web", domain: "ok.example.com"},
+		{app: "web", domain: "bad.example.com"},
+	}
+	err := addAppDomains(context.Background(), &out, pending, add)
+	if err == nil || !strings.Contains(err.Error(), "1 of 2 custom domains were not added") {
+		t.Fatalf("err = %v, want '1 of 2'", err)
+	}
+	// The failing domain must not stop the others.
+	if len(calls) != 2 || calls[0] != "web ok.example.com" || calls[1] != "web bad.example.com" {
+		t.Errorf("calls = %v, want both domains attempted in order", calls)
+	}
+	s := out.String()
+	if !strings.Contains(s, `domain "ok.example.com" on app "web" ... added`) {
+		t.Errorf("missing success line:\n%s", s)
+	}
+	if !strings.Contains(s, `domain "bad.example.com" on app "web" ... failed: domain already belongs to another project`) {
+		t.Errorf("missing failure line with backend error:\n%s", s)
+	}
+
+	// No failures -> no error.
+	if err := addAppDomains(context.Background(), io.Discard,
+		[]pendingDomain{{app: "web", domain: "ok.example.com"}},
+		func(_ context.Context, _, _ string) error { return nil }); err != nil {
+		t.Errorf("all added: err = %v, want nil", err)
 	}
 }
 
