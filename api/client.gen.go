@@ -7484,6 +7484,8 @@ type CreateAppResponse struct {
 	JSON201 *App
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *GenericMessage
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *GenericMessage
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GenericMessage
 }
@@ -7496,6 +7498,11 @@ func (r CreateAppResponse) GetJSON201() *App {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateAppResponse) GetJSON401() *GenericMessage {
 	return r.JSON401
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateAppResponse) GetJSON409() *GenericMessage {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -7665,6 +7672,8 @@ type UpdateAppResponse struct {
 	JSON401 *GenericMessage
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *GenericMessage
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *GenericMessage
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GenericMessage
 }
@@ -7682,6 +7691,11 @@ func (r UpdateAppResponse) GetJSON401() *GenericMessage {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r UpdateAppResponse) GetJSON404() *GenericMessage {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdateAppResponse) GetJSON409() *GenericMessage {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -7789,6 +7803,8 @@ type AddDomainResponse struct {
 	JSON401 *GenericMessage
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *GenericMessage
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *GenericMessage
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GenericMessage
 }
@@ -7806,6 +7822,11 @@ func (r AddDomainResponse) GetJSON401() *GenericMessage {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r AddDomainResponse) GetJSON404() *GenericMessage {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r AddDomainResponse) GetJSON409() *GenericMessage {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -13059,6 +13080,13 @@ func ParseCreateAppResponse(rsp *http.Response) (*CreateAppResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GenericMessage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -13200,6 +13228,13 @@ func ParseUpdateAppResponse(rsp *http.Response) (*UpdateAppResponse, error) {
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GenericMessage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -13293,6 +13328,13 @@ func ParseAddDomainResponse(rsp *http.Response) (*AddDomainResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GenericMessage
