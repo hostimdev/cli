@@ -45,6 +45,9 @@ func statusOne(cmd *cobra.Command, c *cli, a *api.ClientWithResponses, project, 
 		{"Runtime", runtimeStr(st.RuntimeStatus)},
 		{"Internal DNS", dash(str(st.InternalDNS))},
 	}
+	if sha := str(st.GitCommit); sha != "" {
+		rows = append(rows, []string{"Commit", sha[:min(7, len(sha))]})
+	}
 	if st.LastDeployedAt != nil {
 		rows = append(rows, []string{"Last deployed", st.LastDeployedAt.Format("2006-01-02 15:04:05")})
 	}

@@ -655,6 +655,9 @@ literal `$(...)` text — that is expected, and the app sees the resolved value:
 
 - `$(BUILTIN_DOMAIN)` — the app's built-in hostname, without a scheme
   (`myapp-abc123.hostim.app`).
+- `$(GIT_COMMIT)` and `$(GIT_COMMIT_SHORT)` — the full and 7-character SHA of the
+  commit the running image was built from. Git apps only; `hostim status` shows
+  the short one.
 - Managed databases in the same project publish connection variables prefixed
   with the database's name, upper-cased and with `-` turned into `_`. A Postgres
   named `main` gives `$(MAIN_POSTGRES_HOST)`, `$(MAIN_POSTGRES_PORT)`,

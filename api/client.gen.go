@@ -514,6 +514,9 @@ type AppStatus struct {
 		Status string `json:"status"`
 	} `json:"certificates,omitempty"`
 
+	// GitCommit The git commit SHA the running image was built from (git apps only)
+	GitCommit *string `json:"gitCommit,omitempty"`
+
 	// InternalDNS The internal DNS
 	InternalDNS *string `json:"internalDNS,omitempty"`
 
