@@ -9,9 +9,8 @@ This file is the complete manual. The binary carries the same text: run
 `hostim agent` to print it to stdout, so an agent or a script can read the
 whole manual without network access.
 
-> **Beta.** The CLI and the public API are in beta. Commands, flags, output and
-> API responses can change between releases. Check the release notes before you
-> upgrade.
+Commands, flags, output and API responses can change between releases. Check
+the release notes before you upgrade.
 
 ## Contents
 
