@@ -142,12 +142,14 @@ Backups:
 ```sh
 hostim backups                    # schedule, retention and last backup per resource
 hostim backups ls main --kind postgres   # the backups of one resource, newest first
-hostim backups download <id> -f backup.tar   # prepare then download; re-run to resume
+hostim backups download <id>      # prepare then download; re-run to resume
 ```
 
 `hostim backups download` prepares the file first, which can take minutes for a
 large backup, then downloads it. Re-running the same command resumes an
-interrupted download. `-f -` writes to stdout and cannot resume.
+interrupted download. `-f -` writes to stdout and cannot resume. Files are
+zstd-compressed: `zstd -d <file>.sql.zst` for databases, `tar --zstd -xf
+<file>.tar.zst` for volumes.
 
 `hostim domain add` prints the A record to create. The certificate is issued
 automatically once DNS resolves; there is no manual ACME step.

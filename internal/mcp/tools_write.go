@@ -418,7 +418,7 @@ func (s *Server) registerWriteTools() {
 		})
 
 	addWrite(s.srv, "download_backup", "Download backup",
-		"Prepare a download of one backup and return its state. Preparing takes from seconds to many minutes for large backups: while phase is Pending or Running, call this tool again after a short wait. When phase is Succeeded, url is a direct HTTPS download link that is valid for 24 hours (until expiresAt); fetch it with curl -C - -o <fileName> '<url>' to resume an interrupted download. If phase is Failed, calling again retries.",
+		"Prepare a download of one backup and return its state. Preparing takes from seconds to many minutes for large backups: while phase is Pending or Running, call this tool again after a short wait. When phase is Succeeded, url is a direct HTTPS download link that is valid for 24 hours (until expiresAt); fetch it with curl -C - -o <fileName> '<url>' to resume an interrupted download. The file is zstd-compressed: unpack a .sql.zst with zstd -d, a .tar.zst with tar --zstd -xf. If phase is Failed, calling again retries.",
 		false, func(ctx context.Context, in downloadBackupArgs) (any, error) {
 			id, err := s.projectID(ctx, in.Project)
 			if err != nil {
