@@ -363,3 +363,15 @@ func TestHumanBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestUnpackHint(t *testing.T) {
+	for name, want := range map[string]string{
+		"main-20261001-1020.sql.zst": "Unpack with: zstd -d main-20261001-1020.sql.zst",
+		"data-20261001-1020.tar.zst": "Unpack with: tar --zstd -xf data-20261001-1020.tar.zst",
+		"old.sql":                    "",
+	} {
+		if got := unpackHint(name); got != want {
+			t.Errorf("unpackHint(%q) = %q, want %q", name, got, want)
+		}
+	}
+}

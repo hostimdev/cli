@@ -443,7 +443,7 @@ Mount a volume on an app with `hostim deploy <app> --volume data:/var/lib/app`.
 hostim backups                        # schedule, retention and last backup per resource
 hostim backups ls data                # the backups of one database or volume, newest first
 hostim backups ls main --kind postgres   # skip the kind lookup
-hostim backups download 1a2b3c4d -f data.tar   # prepare, then download
+hostim backups download 1a2b3c4d               # prepare, then download
 hostim backups download 1a2b3c4d -f -           # write to stdout (no resume)
 ```
 
@@ -454,6 +454,10 @@ the resource name; if a database and a volume share a name, pass
 first, which can take minutes for a large backup, then downloads it. If the
 transfer is interrupted, run the same command again: it resumes from the bytes
 already on disk. `-f -` writes to stdout and cannot resume.
+
+Downloads are compressed with zstd. A database backup is a `.sql.zst` file
+(unpack with `zstd -d <file>`), a volume backup a `.tar.zst` archive (unpack
+with `tar --zstd -xf <file>`).
 
 ### templates
 

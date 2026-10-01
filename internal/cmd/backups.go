@@ -245,6 +245,9 @@ func backupsDownloadCmd(c *cli) *cobra.Command {
 			}
 			if target != "-" {
 				fmt.Fprintf(cmd.OutOrStdout(), "Downloaded %s.\n", target)
+				if hint := unpackHint(target); hint != "" {
+					fmt.Fprintln(cmd.OutOrStdout(), hint)
+				}
 			}
 			return nil
 		},
@@ -523,6 +526,18 @@ func (p *progressWriter) report(prefix string, now time.Time) {
 		return
 	}
 	fmt.Fprintf(p.errW, "%s%s\n", humanBytes(p.done), total)
+}
+
+// unpackHint tells how to unpack a zstd-compressed backup file, or returns ""
+// for any other name.
+func unpackHint(name string) string {
+	switch {
+	case strings.HasSuffix(name, ".tar.zst"):
+		return "Unpack with: tar --zstd -xf " + name
+	case strings.HasSuffix(name, ".zst"):
+		return "Unpack with: zstd -d " + name
+	}
+	return ""
 }
 
 // backupComplete reports whether target already holds the whole backup.
