@@ -30,6 +30,7 @@ the release notes before you upgrade.
   - [exec](#exec)
   - [db](#db)
   - [volumes](#volumes)
+  - [backups](#backups)
   - [templates](#templates)
   - [regions](#regions)
   - [completion](#completion)
@@ -436,6 +437,24 @@ pricing <region> --for volume`.
 
 Mount a volume on an app with `hostim deploy <app> --volume data:/var/lib/app`.
 
+### backups
+
+```sh
+hostim backups                        # schedule, retention and last backup per resource
+hostim backups ls data                # the backups of one database or volume, newest first
+hostim backups ls main --kind postgres   # skip the kind lookup
+hostim backups download 1a2b3c4d -f data.tar   # prepare, then download
+hostim backups download 1a2b3c4d -f -           # write to stdout (no resume)
+```
+
+`hostim backups` lists every database and volume with the time of its last
+backup, then the schedule and the retention policy. `hostim backups ls` needs
+the resource name; if a database and a volume share a name, pass
+`--kind postgres|mysql|volume`. `hostim backups download` prepares the file
+first, which can take minutes for a large backup, then downloads it. If the
+transfer is interrupted, run the same command again: it resumes from the bytes
+already on disk. `-f -` writes to stdout and cannot resume.
+
 ### templates
 
 A template is one YAML description of a whole stack — volumes, databases, Redis
@@ -544,10 +563,10 @@ binary, the same token and the same public API as every other command.
 
 Read-only tools are always available: `list_projects`, `list_apps`, `get_app`,
 `get_app_status`, `get_app_logs`, `get_app_events`, `list_databases`,
-`get_database_credentials`, `list_volumes`, `list_regions`, `list_templates`
-and `list_region_plans`. Tools that create, change or delete anything —
-projects, apps, databases, volumes, env vars and domains — are only registered
-with `--allow-write`.
+`get_database_credentials`, `list_volumes`, `list_backups`, `list_regions`,
+`list_templates` and `list_region_plans`. Tools that create, change or delete
+anything — projects, apps, databases, volumes, env vars, domains and backup
+downloads — are only registered with `--allow-write`.
 
 Point an MCP client at it. For Claude Desktop, in
 `claude_desktop_config.json`:

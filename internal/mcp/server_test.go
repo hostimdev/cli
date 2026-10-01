@@ -45,6 +45,18 @@ func (ta *testAPI) register() http.Handler {
 		ta.lastEnvBody = string(body)
 		_, _ = io.WriteString(w, `{"message":"ok"}`)
 	})
+	mux.HandleFunc("/api/projects/hpr-1/backups", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"enabled":true,"ready":true,"schedule":"0 3 * * *","resources":[{"kind":"postgres","name":"db1"}],"retention":{"keepLast":3},"runs":[]}`)
+	})
+	mux.HandleFunc("/api/projects/hpr-1/backups/list", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"items":[{"id":"bk-1","time":"2026-01-01T00:00:00Z","trigger":"schedule","sizeBytes":1024}]}`)
+	})
+	mux.HandleFunc("/api/projects/hpr-1/backups/bk-1/download", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"bk-1","phase":"Succeeded","fileName":"backup.tar","sizeBytes":1024,"url":"https://example.com/dl","expiresAt":"2026-01-02T00:00:00Z"}`)
+	})
 	return mux
 }
 
@@ -199,5 +211,60 @@ func TestUnsetLastEnvVarSendsEmptyArray(t *testing.T) {
 	}
 	if strings.TrimSpace(ta.lastEnvBody) != "[]" {
 		t.Errorf("env body = %s, want []", ta.lastEnvBody)
+	}
+}
+
+// list_backups answers the overview with no kind/name, and the resource's backup
+// list when both are given.
+func TestListBackupsSwitchesBetweenOverviewAndList(t *testing.T) {
+	session, _ := connect(t, false)
+
+	res, err := session.CallTool(t.Context(), &sdk.CallToolParams{
+		Name:      "list_backups",
+		Arguments: map[string]any{"project": "demo"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("list_backups overview failed: %v", res.Content)
+	}
+	b, _ := json.Marshal(res.StructuredContent)
+	if !strings.Contains(string(b), `"schedule"`) || !strings.Contains(string(b), "postgres") {
+		t.Errorf("overview payload = %s", b)
+	}
+
+	res, err = session.CallTool(t.Context(), &sdk.CallToolParams{
+		Name:      "list_backups",
+		Arguments: map[string]any{"project": "demo", "kind": "postgres", "name": "db1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("list_backups list failed: %v", res.Content)
+	}
+	b, _ = json.Marshal(res.StructuredContent)
+	if !strings.Contains(string(b), "bk-1") {
+		t.Errorf("list payload = %s", b)
+	}
+}
+
+func TestDownloadBackupReturnsState(t *testing.T) {
+	session, _ := connect(t, true)
+
+	res, err := session.CallTool(t.Context(), &sdk.CallToolParams{
+		Name:      "download_backup",
+		Arguments: map[string]any{"project": "demo", "backup_id": "bk-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("download_backup failed: %v", res.Content)
+	}
+	b, _ := json.Marshal(res.StructuredContent)
+	if !strings.Contains(string(b), "Succeeded") || !strings.Contains(string(b), "backup.tar") {
+		t.Errorf("download payload = %s", b)
 	}
 }

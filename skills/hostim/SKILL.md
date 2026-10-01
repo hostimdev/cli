@@ -137,6 +137,18 @@ hostim exec web -- sh             # a shell in the container (via the project ba
 hostim overview                   # every resource and its monthly cost
 ```
 
+Backups:
+
+```sh
+hostim backups                    # schedule, retention and last backup per resource
+hostim backups ls main --kind postgres   # the backups of one resource, newest first
+hostim backups download <id> -f backup.tar   # prepare then download; re-run to resume
+```
+
+`hostim backups download` prepares the file first, which can take minutes for a
+large backup, then downloads it. Re-running the same command resumes an
+interrupted download. `-f -` writes to stdout and cannot resume.
+
 `hostim domain add` prints the A record to create. The certificate is issued
 automatically once DNS resolves; there is no manual ACME step.
 

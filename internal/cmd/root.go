@@ -118,6 +118,7 @@ func newRootCmd(c *cli, manual string) *cobra.Command {
 		newExecCmd(c),
 		newDBCmd(c),
 		newVolumesCmd(c),
+		newBackupsCmd(c),
 		newRegionsCmd(c),
 		newCompletionCmd(),
 		newAgentCmd(manual),
