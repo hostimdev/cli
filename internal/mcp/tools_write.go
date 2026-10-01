@@ -113,6 +113,11 @@ type deleteVolumeArgs struct {
 	Name    string `json:"name" jsonschema:"volume name; list them with list_volumes"`
 }
 
+type downloadBackupArgs struct {
+	Project  string `json:"project" jsonschema:"project name or hpr-... ID; list them with list_projects"`
+	BackupId string `json:"backup_id" jsonschema:"backup ID; list them with list_backups"`
+}
+
 func (s *Server) registerWriteTools() {
 	addWrite(s.srv, "create_project", "Create project",
 		"Create a new project in a region. A project is the container every app, database and volume lives in.",
@@ -410,6 +415,24 @@ func (s *Server) registerWriteTools() {
 				return nil, err
 			}
 			return ack("deleted", "volume", in.Name, resp.StatusCode(), resp.Body)
+		})
+
+	addWrite(s.srv, "download_backup", "Download backup",
+		"Prepare a download of one backup and return its state. Preparing takes from seconds to many minutes for large backups: while phase is Pending or Running, call this tool again after a short wait. When phase is Succeeded, url is a direct HTTPS download link that is valid for 24 hours (until expiresAt); fetch it with curl -C - -o <fileName> '<url>' to resume an interrupted download. If phase is Failed, calling again retries.",
+		false, func(ctx context.Context, in downloadBackupArgs) (any, error) {
+			id, err := s.projectID(ctx, in.Project)
+			if err != nil {
+				return nil, err
+			}
+			resp, err := s.api.CreateBackupDownloadWithResponse(ctx, id, in.BackupId)
+			if err != nil {
+				return nil, err
+			}
+			out := resp.JSON200
+			if resp.JSON201 != nil {
+				out = resp.JSON201
+			}
+			return ok(out, resp.StatusCode(), resp.Body)
 		})
 }
 

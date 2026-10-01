@@ -43,6 +43,12 @@ type regionArgs struct {
 	Region string `json:"region" jsonschema:"region name; list them with list_regions"`
 }
 
+type listBackupsArgs struct {
+	Project string `json:"project" jsonschema:"project name or hpr-... ID; list them with list_projects"`
+	Kind    string `json:"kind,omitempty" jsonschema:"resource kind: postgres, mysql or volume; pass together with name to list one resource"`
+	Name    string `json:"name,omitempty" jsonschema:"database or volume name; pass together with kind to list one resource"`
+}
+
 func (s *Server) registerReadTools() {
 	addRead(s.srv, "list_projects", "List projects",
 		"List every Hostim project in the account, with its ID, region, deployed service count and projected monthly cost.",
@@ -220,6 +226,35 @@ func (s *Server) registerReadTools() {
 				return nil, err
 			}
 			return ok(resp.JSON200, resp.StatusCode(), resp.Body)
+		})
+
+	addRead(s.srv, "list_backups", "List backups",
+		"List a project's backups. Without kind and name: whether backups are enabled, the schedule, retention, every database and volume with its last backup, and the recent runs. With kind and name: the backups of that one resource, newest first, with their IDs for download_backup.",
+		func(ctx context.Context, in listBackupsArgs) (any, error) {
+			id, err := s.projectID(ctx, in.Project)
+			if err != nil {
+				return nil, err
+			}
+			switch {
+			case in.Kind == "" && in.Name == "":
+				resp, err := s.api.GetBackupOverviewWithResponse(ctx, id)
+				if err != nil {
+					return nil, err
+				}
+				return ok(resp.JSON200, resp.StatusCode(), resp.Body)
+			case in.Kind != "" && in.Name != "":
+				kind := api.ListBackupsParamsKind(in.Kind)
+				if !kind.Valid() {
+					return nil, fmt.Errorf("kind must be postgres, mysql or volume, got %q", in.Kind)
+				}
+				resp, err := s.api.ListBackupsWithResponse(ctx, id, &api.ListBackupsParams{Kind: kind, Name: in.Name})
+				if err != nil {
+					return nil, err
+				}
+				return ok(resp.JSON200, resp.StatusCode(), resp.Body)
+			default:
+				return nil, fmt.Errorf("pass both kind and name to list one resource, or neither for the overview")
+			}
 		})
 
 	addRead(s.srv, "list_regions", "List regions",

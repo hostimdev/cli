@@ -383,6 +383,27 @@ func (e GetAppLogsParamsLogType) Valid() bool {
 	}
 }
 
+// Defines values for ListBackupsParamsKind.
+const (
+	ListBackupsParamsKindMysql    ListBackupsParamsKind = "mysql"
+	ListBackupsParamsKindPostgres ListBackupsParamsKind = "postgres"
+	ListBackupsParamsKindVolume   ListBackupsParamsKind = "volume"
+)
+
+// Valid indicates whether the value is a known member of the ListBackupsParamsKind enum.
+func (e ListBackupsParamsKind) Valid() bool {
+	switch e {
+	case ListBackupsParamsKindMysql:
+		return true
+	case ListBackupsParamsKindPostgres:
+		return true
+	case ListBackupsParamsKindVolume:
+		return true
+	default:
+		return false
+	}
+}
+
 // App defines model for App.
 type App struct {
 	// BuiltInDomain The built-in domain of the app
@@ -535,6 +556,146 @@ type AppStatusBuildStatus string
 
 // AppStatusRuntimeStatus The runtime status
 type AppStatusRuntimeStatus string
+
+// Backup One successful backup of a database or volume. The ID is the restic short snapshot ID.
+type Backup struct {
+	// Id The restic short snapshot ID
+	Id string `json:"id"`
+
+	// SizeBytes restic's data_added for this backup
+	SizeBytes int64 `json:"sizeBytes"`
+
+	// Time When the backup ran
+	Time time.Time `json:"time"`
+
+	// Trigger What created the backup
+	Trigger string `json:"trigger"`
+}
+
+// BackupDownload A prepared download of one backed up database or volume.
+type BackupDownload struct {
+	// Error The reason the download failed
+	Error *string `json:"error,omitempty"`
+
+	// ExpiresAt When the download URL stops working
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+
+	// FileName The name of the prepared download file
+	FileName string `json:"fileName"`
+
+	// Id The restic short snapshot ID of the backup
+	Id string `json:"id"`
+
+	// Phase Pending, Running, Succeeded or Failed
+	Phase string `json:"phase"`
+
+	// SizeBytes The size of the prepared download file
+	SizeBytes *int64 `json:"sizeBytes,omitempty"`
+
+	// Url The pre-signed download URL, valid until expiresAt
+	Url *string `json:"url,omitempty"`
+}
+
+// BackupItem defines model for BackupItem.
+type BackupItem struct {
+	// Error The reason the item failed
+	Error *string `json:"error,omitempty"`
+
+	// Id The restic short snapshot ID of this item
+	Id *string `json:"id,omitempty"`
+
+	// Kind postgres, mysql or volume
+	Kind string `json:"kind"`
+
+	// Name Name of the database or volume
+	Name string `json:"name"`
+
+	// Phase Pending, Running, Succeeded or Failed
+	Phase string `json:"phase"`
+
+	// SizeBytes restic's data_added for this item
+	SizeBytes *int64 `json:"sizeBytes,omitempty"`
+}
+
+// BackupList The backups of one resource, newest first.
+type BackupList struct {
+	Items []Backup `json:"items"`
+}
+
+// BackupOverview defines model for BackupOverview.
+type BackupOverview struct {
+	// Enabled Whether backups are configured for the project
+	Enabled bool `json:"enabled"`
+
+	// NextRunTime When the next scheduled backup runs, omitted when the schedule is empty or invalid
+	NextRunTime *time.Time `json:"nextRunTime,omitempty"`
+
+	// Ready Whether the restic repository is initialized
+	Ready bool `json:"ready"`
+
+	// Resources Every database and volume of the project
+	Resources []BackupResource `json:"resources"`
+
+	// Retention The restic forget policy read from the project, read-only. A field that is not set is not passed to restic.
+	Retention BackupRetention `json:"retention"`
+
+	// Runs The backup runs, newest first
+	Runs []BackupRun `json:"runs"`
+
+	// Schedule The backup cron schedule from the project, UTC
+	Schedule string `json:"schedule"`
+}
+
+// BackupResource One database or volume of a project and the state of its backups.
+type BackupResource struct {
+	// Kind postgres, mysql or volume
+	Kind string `json:"kind"`
+
+	// LastBackupTime When the last successful backup of this resource ran
+	LastBackupTime *time.Time `json:"lastBackupTime,omitempty"`
+
+	// Name Name of the database or volume
+	Name string `json:"name"`
+}
+
+// BackupRetention The restic forget policy read from the project, read-only. A field that is not set is not passed to restic.
+type BackupRetention struct {
+	// KeepDaily Keep the last N daily snapshots
+	KeepDaily *int `json:"keepDaily,omitempty"`
+
+	// KeepLast Keep the last N snapshots
+	KeepLast *int `json:"keepLast,omitempty"`
+
+	// KeepMonthly Keep the last N monthly snapshots
+	KeepMonthly *int `json:"keepMonthly,omitempty"`
+
+	// KeepWeekly Keep the last N weekly snapshots
+	KeepWeekly *int `json:"keepWeekly,omitempty"`
+}
+
+// BackupRun defines model for BackupRun.
+type BackupRun struct {
+	// CompletedAt When the run reached a terminal phase
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+
+	// Items The state of each database and volume in the run
+	Items []BackupItem `json:"items"`
+
+	// Name The name of the Backup custom resource
+	Name string `json:"name"`
+
+	// Phase Pending, Running, Succeeded, PartiallyFailed or Failed
+	Phase string `json:"phase"`
+
+	// ScheduledTime The cron tick this run belongs to
+	ScheduledTime *time.Time `json:"scheduledTime,omitempty"`
+
+	// StartedAt When the run started
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+
+	// Trigger What created the run
+	Trigger string `json:"trigger"`
+}
 
 // DeviceAuthorization defines model for DeviceAuthorization.
 type DeviceAuthorization struct {
@@ -1029,6 +1190,18 @@ type GetAppLogsParams struct {
 // GetAppLogsParamsLogType defines parameters for GetAppLogs.
 type GetAppLogsParamsLogType string
 
+// ListBackupsParams defines parameters for ListBackups.
+type ListBackupsParams struct {
+	// Kind Resource kind
+	Kind ListBackupsParamsKind `form:"kind" json:"kind"`
+
+	// Name Resource name
+	Name string `form:"name" json:"name"`
+}
+
+// ListBackupsParamsKind defines parameters for ListBackups.
+type ListBackupsParamsKind string
+
 // GetProjectEventsParams defines parameters for GetProjectEvents.
 type GetProjectEventsParams struct {
 	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
@@ -1366,6 +1539,34 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/projects/{projectName}/apps/{appName}/status (the `GetAppStatus` operationId).
 	GetAppStatus(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBackupOverview Get the backup overview of a project
+	//
+	// Returns whether backups are enabled and ready, the schedule and its next run, the retention policy, every database and volume with its last backup, and the backup runs, newest first.
+	//
+	// Corresponds with GET /api/projects/{projectName}/backups (the `GetBackupOverview` operationId).
+	GetBackupOverview(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListBackups List the backups of one database or volume
+	//
+	// Returns the successful backups of one resource, newest first. Backups older than the daily retention are left out, because restic has already pruned them.
+	//
+	// Corresponds with GET /api/projects/{projectName}/backups/list (the `ListBackups` operationId).
+	ListBackups(ctx context.Context, projectName string, params *ListBackupsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBackupDownload Get a prepared backup download
+	//
+	// Returns the state of a prepared download, including the pre-signed URL once the operator has finished.
+	//
+	// Corresponds with GET /api/projects/{projectName}/backups/{backupId}/download (the `GetBackupDownload` operationId).
+	GetBackupDownload(ctx context.Context, projectName string, backupId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateBackupDownload Prepare a backup download
+	//
+	// Creates a BackupDownload custom resource for the given restic snapshot. The operator materializes the file and fills in the pre-signed URL. Returns the existing download when one is already prepared, and 409 when two downloads are already being prepared.
+	//
+	// Corresponds with POST /api/projects/{projectName}/backups/{backupId}/download (the `CreateBackupDownload` operationId).
+	CreateBackupDownload(ctx context.Context, projectName string, backupId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetProjectEvents Get project events
 	//
@@ -2214,6 +2415,74 @@ func (c *Client) RestartApp(ctx context.Context, projectName string, appName str
 // Corresponds with GET /api/projects/{projectName}/apps/{appName}/status (the `GetAppStatus` operationId).
 func (c *Client) GetAppStatus(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAppStatusRequest(c.Server, projectName, appName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetBackupOverview Get the backup overview of a project
+//
+// Returns whether backups are enabled and ready, the schedule and its next run, the retention policy, every database and volume with its last backup, and the backup runs, newest first.
+//
+// Corresponds with GET /api/projects/{projectName}/backups (the `GetBackupOverview` operationId).
+func (c *Client) GetBackupOverview(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBackupOverviewRequest(c.Server, projectName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListBackups List the backups of one database or volume
+//
+// Returns the successful backups of one resource, newest first. Backups older than the daily retention are left out, because restic has already pruned them.
+//
+// Corresponds with GET /api/projects/{projectName}/backups/list (the `ListBackups` operationId).
+func (c *Client) ListBackups(ctx context.Context, projectName string, params *ListBackupsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListBackupsRequest(c.Server, projectName, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetBackupDownload Get a prepared backup download
+//
+// Returns the state of a prepared download, including the pre-signed URL once the operator has finished.
+//
+// Corresponds with GET /api/projects/{projectName}/backups/{backupId}/download (the `GetBackupDownload` operationId).
+func (c *Client) GetBackupDownload(ctx context.Context, projectName string, backupId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBackupDownloadRequest(c.Server, projectName, backupId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateBackupDownload Prepare a backup download
+//
+// Creates a BackupDownload custom resource for the given restic snapshot. The operator materializes the file and fills in the pre-signed URL. Returns the existing download when one is already prepared, and 409 when two downloads are already being prepared.
+//
+// Corresponds with POST /api/projects/{projectName}/backups/{backupId}/download (the `CreateBackupDownload` operationId).
+func (c *Client) CreateBackupDownload(ctx context.Context, projectName string, backupId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBackupDownloadRequest(c.Server, projectName, backupId)
 	if err != nil {
 		return nil, err
 	}
@@ -4268,6 +4537,187 @@ func NewGetAppStatusRequest(server string, projectName string, appName string) (
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBackupOverviewRequest constructs an http.Request for the GetBackupOverview method
+func NewGetBackupOverviewRequest(server string, projectName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/backups", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListBackupsRequest constructs an http.Request for the ListBackups method
+func NewListBackupsRequest(server string, projectName string, params *ListBackupsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/backups/list", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "kind", params.Kind, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "name", params.Name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBackupDownloadRequest constructs an http.Request for the GetBackupDownload method
+func NewGetBackupDownloadRequest(server string, projectName string, backupId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "backupId", backupId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/backups/%s/download", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateBackupDownloadRequest constructs an http.Request for the CreateBackupDownload method
+func NewCreateBackupDownloadRequest(server string, projectName string, backupId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "backupId", backupId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/backups/%s/download", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -6584,6 +7034,42 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/projects/{projectName}/apps/{appName}/status (the `GetAppStatus` operationId).
 	GetAppStatusWithResponse(ctx context.Context, projectName string, appName string, reqEditors ...RequestEditorFn) (*GetAppStatusResponse, error)
 
+	// GetBackupOverviewWithResponse Get the backup overview of a project
+	//
+	// Returns whether backups are enabled and ready, the schedule and its next run, the retention policy, every database and volume with its last backup, and the backup runs, newest first.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/backups (the `GetBackupOverview` operationId).
+	GetBackupOverviewWithResponse(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*GetBackupOverviewResponse, error)
+
+	// ListBackupsWithResponse List the backups of one database or volume
+	//
+	// Returns the successful backups of one resource, newest first. Backups older than the daily retention are left out, because restic has already pruned them.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/backups/list (the `ListBackups` operationId).
+	ListBackupsWithResponse(ctx context.Context, projectName string, params *ListBackupsParams, reqEditors ...RequestEditorFn) (*ListBackupsResponse, error)
+
+	// GetBackupDownloadWithResponse Get a prepared backup download
+	//
+	// Returns the state of a prepared download, including the pre-signed URL once the operator has finished.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/projects/{projectName}/backups/{backupId}/download (the `GetBackupDownload` operationId).
+	GetBackupDownloadWithResponse(ctx context.Context, projectName string, backupId string, reqEditors ...RequestEditorFn) (*GetBackupDownloadResponse, error)
+
+	// CreateBackupDownloadWithResponse Prepare a backup download
+	//
+	// Creates a BackupDownload custom resource for the given restic snapshot. The operator materializes the file and fills in the pre-signed URL. Returns the existing download when one is already prepared, and 409 when two downloads are already being prepared.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/projects/{projectName}/backups/{backupId}/download (the `CreateBackupDownload` operationId).
+	CreateBackupDownloadWithResponse(ctx context.Context, projectName string, backupId string, reqEditors ...RequestEditorFn) (*CreateBackupDownloadResponse, error)
+
 	// GetProjectEventsWithResponse Get project events
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -8418,6 +8904,275 @@ func (r GetAppStatusResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAppStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetBackupOverviewResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BackupOverview
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetBackupOverviewResponse) GetJSON200() *BackupOverview {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetBackupOverviewResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetBackupOverviewResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetBackupOverviewResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetBackupOverviewResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBackupOverviewResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBackupOverviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetBackupOverviewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListBackupsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BackupList
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GenericMessage
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListBackupsResponse) GetJSON200() *BackupList {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListBackupsResponse) GetJSON400() *GenericMessage {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListBackupsResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListBackupsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListBackupsResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListBackupsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListBackupsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListBackupsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListBackupsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetBackupDownloadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BackupDownload
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetBackupDownloadResponse) GetJSON200() *BackupDownload {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetBackupDownloadResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetBackupDownloadResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetBackupDownloadResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetBackupDownloadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBackupDownloadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBackupDownloadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetBackupDownloadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateBackupDownloadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BackupDownload
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *BackupDownload
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateBackupDownloadResponse) GetJSON200() *BackupDownload {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateBackupDownloadResponse) GetJSON201() *BackupDownload {
+	return r.JSON201
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateBackupDownloadResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateBackupDownloadResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateBackupDownloadResponse) GetJSON409() *GenericMessage {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateBackupDownloadResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateBackupDownloadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateBackupDownloadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateBackupDownloadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateBackupDownloadResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -11893,6 +12648,66 @@ func (c *ClientWithResponses) GetAppStatusWithResponse(ctx context.Context, proj
 	return ParseGetAppStatusResponse(rsp)
 }
 
+// GetBackupOverviewWithResponse Get the backup overview of a project
+//
+// Returns whether backups are enabled and ready, the schedule and its next run, the retention policy, every database and volume with its last backup, and the backup runs, newest first.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/backups (the `GetBackupOverview` operationId).
+func (c *ClientWithResponses) GetBackupOverviewWithResponse(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*GetBackupOverviewResponse, error) {
+	rsp, err := c.GetBackupOverview(ctx, projectName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBackupOverviewResponse(rsp)
+}
+
+// ListBackupsWithResponse List the backups of one database or volume
+//
+// Returns the successful backups of one resource, newest first. Backups older than the daily retention are left out, because restic has already pruned them.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/backups/list (the `ListBackups` operationId).
+func (c *ClientWithResponses) ListBackupsWithResponse(ctx context.Context, projectName string, params *ListBackupsParams, reqEditors ...RequestEditorFn) (*ListBackupsResponse, error) {
+	rsp, err := c.ListBackups(ctx, projectName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListBackupsResponse(rsp)
+}
+
+// GetBackupDownloadWithResponse Get a prepared backup download
+//
+// Returns the state of a prepared download, including the pre-signed URL once the operator has finished.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/projects/{projectName}/backups/{backupId}/download (the `GetBackupDownload` operationId).
+func (c *ClientWithResponses) GetBackupDownloadWithResponse(ctx context.Context, projectName string, backupId string, reqEditors ...RequestEditorFn) (*GetBackupDownloadResponse, error) {
+	rsp, err := c.GetBackupDownload(ctx, projectName, backupId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBackupDownloadResponse(rsp)
+}
+
+// CreateBackupDownloadWithResponse Prepare a backup download
+//
+// Creates a BackupDownload custom resource for the given restic snapshot. The operator materializes the file and fills in the pre-signed URL. Returns the existing download when one is already prepared, and 409 when two downloads are already being prepared.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/projects/{projectName}/backups/{backupId}/download (the `CreateBackupDownload` operationId).
+func (c *ClientWithResponses) CreateBackupDownloadWithResponse(ctx context.Context, projectName string, backupId string, reqEditors ...RequestEditorFn) (*CreateBackupDownloadResponse, error) {
+	rsp, err := c.CreateBackupDownload(ctx, projectName, backupId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBackupDownloadResponse(rsp)
+}
+
 // GetProjectEventsWithResponse Get project events
 //
 // Returns a wrapper object for the known response body format(s).
@@ -13761,6 +14576,215 @@ func ParseGetAppStatusResponse(rsp *http.Response) (*GetAppStatusResponse, error
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBackupOverviewResponse parses an HTTP response from a GetBackupOverviewWithResponse call
+func ParseGetBackupOverviewResponse(rsp *http.Response) (*GetBackupOverviewResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBackupOverviewResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BackupOverview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListBackupsResponse parses an HTTP response from a ListBackupsWithResponse call
+func ParseListBackupsResponse(rsp *http.Response) (*ListBackupsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListBackupsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BackupList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBackupDownloadResponse parses an HTTP response from a GetBackupDownloadWithResponse call
+func ParseGetBackupDownloadResponse(rsp *http.Response) (*GetBackupDownloadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBackupDownloadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BackupDownload
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateBackupDownloadResponse parses an HTTP response from a CreateBackupDownloadWithResponse call
+func ParseCreateBackupDownloadResponse(rsp *http.Response) (*CreateBackupDownloadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateBackupDownloadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BackupDownload
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest BackupDownload
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GenericMessage
