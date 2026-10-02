@@ -111,3 +111,19 @@ func TestCheckNewAppFlagsPartial(t *testing.T) {
 		t.Error("a plan plus a docker image is complete")
 	}
 }
+
+// A public app without a port gets an ingress with no backend port, which the
+// cluster rejects, so the app never reports a status.
+func TestCheckNewAppFlagsPublicNeedsPort(t *testing.T) {
+	err := checkNewAppFlags("web", &deployFlags{plan: "small", dockerImage: "nginx", public: true})
+	var me *missingError
+	if !errors.As(err, &me) {
+		t.Fatalf("want *missingError, got %v", err)
+	}
+	if len(me.Missing) != 1 || me.Missing[0] != "--port" {
+		t.Errorf("missing = %v, want [--port]", me.Missing)
+	}
+	if checkNewAppFlags("web", &deployFlags{plan: "small", dockerImage: "nginx", public: true, port: 80}) != nil {
+		t.Error("a public app with a port is complete")
+	}
+}

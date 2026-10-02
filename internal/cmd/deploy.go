@@ -21,7 +21,6 @@ type deployFlags struct {
 	gitToken   string
 
 	dockerImage string
-	registry    string
 	dockerUser  string
 	dockerPass  string
 
@@ -75,13 +74,12 @@ func newDeployCmd(c *cli) *cobra.Command {
 	fl.StringVar(&f.branch, "branch", "", "git branch")
 	fl.StringVar(&f.dockerfile, "dockerfile", "", "path to the Dockerfile in the repo")
 	fl.StringVar(&f.gitToken, "git-token", "", "token for private git repos")
-	fl.StringVar(&f.dockerImage, "docker-image", "", "docker image reference")
-	fl.StringVar(&f.registry, "registry", "", "docker registry")
+	fl.StringVar(&f.dockerImage, "docker-image", "", "docker image reference, registry host included")
 	fl.StringVar(&f.dockerUser, "docker-user", "", "docker registry username")
 	fl.StringVar(&f.dockerPass, "docker-pass", "", "docker registry password")
 	fl.StringVar(&f.plan, "plan", "", "app plan (required when creating)")
 	fl.IntVar(&f.replicas, "replicas", 1, "number of replicas (on create)")
-	fl.IntVar(&f.port, "port", 0, "HTTP port (on create)")
+	fl.IntVar(&f.port, "port", 0, "HTTP port (on create; required unless --public=false)")
 	fl.BoolVar(&f.public, "public", true, "expose the app publicly (on create)")
 	fl.StringArrayVar(&f.domains, "domain", nil, "custom domain (repeatable, on create)")
 	fl.StringArrayVar(&f.volumes, "volume", nil, "mount a volume as name:mountPath (repeatable)")
@@ -112,11 +110,30 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 	// srcType is the app's final deployment source ("git" or "docker"), used
 	// below to decide whether to wait on a build or on runtime readiness.
 	var srcType string
+	// rolloutAfter is set on a docker update that rolls a new ReplicaSet: the
+	// lastDeployedAt observed before the update, used to wait out the previous
+	// pod's status (see PollBuild). Nil means no rollout is expected.
+	var rolloutAfter *time.Time
 	// action is what this run did to the app, reported in the -o json result.
 	action := "rebuilding"
 
 	if exists {
 		app := *getResp.JSON200
+		// A docker update that changes the image reference rolls a new ReplicaSet.
+		// Capture the previous rollout time before the update so the poll can tell
+		// the new rollout apart from the old pod's status (see PollBuild).
+		if f.dockerImage != "" && f.dockerImage != dockerImageOf(app) {
+			st, err := a.GetAppStatusWithResponse(ctx, project, appName)
+			if err != nil {
+				return err
+			}
+			if err := checkResp(st.StatusCode(), st.Body); err != nil {
+				return err
+			}
+			if st.JSON200 != nil {
+				rolloutAfter = st.JSON200.LastDeployedAt
+			}
+		}
 		changed, err := applySource(&app, f)
 		if err != nil {
 			return err
@@ -181,7 +198,7 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 
 	var lastBuild api.AppStatusBuildStatus
 	var lastRuntime api.AppStatusRuntimeStatus
-	final, err := client.PollBuild(ctx, a, project, appName, f.interval, expectBuild, func(st *api.AppStatus) {
+	final, err := client.PollBuild(ctx, a, project, appName, f.interval, expectBuild, rolloutAfter, func(st *api.AppStatus) {
 		if st.BuildStatus != nil && *st.BuildStatus != "" && *st.BuildStatus != lastBuild {
 			lastBuild = *st.BuildStatus
 			c.progress(cmd, "  build: %s\n", *st.BuildStatus)
@@ -224,6 +241,18 @@ type deploymentSource struct {
 	Docker *dockSource `json:"docker,omitempty"`
 }
 
+// loadSource copies an App's inline DeploymentSource into the named
+// deploymentSource type via a JSON round-trip.
+func loadSource(ds any) (deploymentSource, error) {
+	var s deploymentSource
+	b, err := json.Marshal(ds)
+	if err != nil {
+		return s, err
+	}
+	err = json.Unmarshal(b, &s)
+	return s, err
+}
+
 type gitSource struct {
 	Url            string  `json:"url"`
 	Branch         *string `json:"branch,omitempty"`
@@ -233,35 +262,35 @@ type gitSource struct {
 
 type dockSource struct {
 	Image    string  `json:"image"`
-	Registry *string `json:"registry,omitempty"`
 	Username *string `json:"username,omitempty"`
 	Password *string `json:"password,omitempty"`
 }
 
 // deploymentType reads the "type" discriminator ("git" or "docker") out of an
-// App's inline DeploymentSource via a JSON round-trip.
+// App's inline DeploymentSource.
 func deploymentType(ds any) string {
-	b, err := json.Marshal(ds)
+	s, err := loadSource(ds)
 	if err != nil {
-		return ""
-	}
-	var s deploymentSource
-	if err := json.Unmarshal(b, &s); err != nil {
 		return ""
 	}
 	return s.Type
 }
 
+// dockerImageOf reads the docker image reference out of an App's inline
+// DeploymentSource, or "" when the app is not a docker source.
+func dockerImageOf(app api.App) string {
+	s, err := loadSource(app.DeploymentSource)
+	if err != nil || s.Docker == nil {
+		return ""
+	}
+	return s.Docker.Image
+}
+
 // applySource patches app.DeploymentSource from any deploy flags that were set,
 // returning true if anything changed (so the caller knows to PUT).
 func applySource(app *api.App, f *deployFlags) (bool, error) {
-	// Load the current source into our named type.
-	cur := deploymentSource{}
-	b, err := json.Marshal(app.DeploymentSource)
+	cur, err := loadSource(app.DeploymentSource)
 	if err != nil {
-		return false, err
-	}
-	if err := json.Unmarshal(b, &cur); err != nil {
 		return false, err
 	}
 
@@ -284,7 +313,6 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 			cur.Docker = &dockSource{}
 		}
 		cur.Docker.Image = f.dockerImage
-		setOpt(&cur.Docker.Registry, f.registry)
 		setOpt(&cur.Docker.Username, f.dockerUser)
 		setOpt(&cur.Docker.Password, f.dockerPass)
 		cur.Git = nil
@@ -377,6 +405,11 @@ func checkNewAppFlags(name string, f *deployFlags) error {
 			"                           the API builds from a git URL it can reach, or runs a\n"+
 			"                           docker image; a local-only directory has to be pushed\n"+
 			"                           or built and published first")
+	}
+	if f.public && f.port == 0 {
+		missing = append(missing, "--port")
+		lines = append(lines, "  --port <port>            the port the app listens on; a worker with no HTTP\n"+
+			"                           takes --public=false instead")
 	}
 	if len(missing) == 0 {
 		return nil

@@ -457,7 +457,7 @@ func promptAppSource(out io.Writer, r *bufio.Reader, app *api.App) error {
 			setOpt(&ds.Git.Token, token)
 		}
 	default: // docker
-		image, err := promptRequired(out, r, "Docker image (e.g. nginx:latest)")
+		image, err := promptRequired(out, r, "Docker image (e.g. nginx:latest or registry.example.com/app:1.0)")
 		if err != nil {
 			return err
 		}
@@ -468,10 +468,6 @@ func promptAppSource(out io.Writer, r *bufio.Reader, app *api.App) error {
 			return err
 		}
 		if private {
-			registry, err := promptStr(out, r, "Registry (blank for Docker Hub)", "")
-			if err != nil {
-				return err
-			}
 			user, err := promptStr(out, r, "Username", "")
 			if err != nil {
 				return err
@@ -480,7 +476,6 @@ func promptAppSource(out io.Writer, r *bufio.Reader, app *api.App) error {
 			if err != nil {
 				return err
 			}
-			setOpt(&ds.Docker.Registry, registry)
 			setOpt(&ds.Docker.Username, user)
 			setOpt(&ds.Docker.Password, pass)
 		}
@@ -889,7 +884,7 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 		// build phase, so wait on runtime readiness instead.
 		expectBuild := app.DeploymentSource.Type == api.Git
 		cctx, cancel := context.WithTimeout(ctx, timeout)
-		res, perr := client.PollBuild(cctx, a, project, app.Name, interval, expectBuild, nil)
+		res, perr := client.PollBuild(cctx, a, project, app.Name, interval, expectBuild, nil, nil)
 		cancel()
 		if perr != nil {
 			switch {

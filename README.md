@@ -232,9 +232,9 @@ hostim deploy web
 # deploy a docker image and do not wait
 hostim deploy web --docker-image ghcr.io/me/app:latest --wait=false
 
-# private registry
-hostim deploy web --docker-image me/app:1.2.3 \
-  --registry registry.example.com --docker-user ci --docker-pass "$REG_PASS"
+# private registry: the registry host goes inside the image reference
+hostim deploy web --docker-image registry.example.com/me/app:1.2.3 \
+  --docker-user ci --docker-pass "$REG_PASS"
 
 # private git repo
 hostim deploy web --git https://github.com/me/private --git-token "$GH_TOKEN"
@@ -251,12 +251,11 @@ Flags:
 --branch string              git branch
 --dockerfile string          path to the Dockerfile in the repo
 --git-token string           token for private git repos
---docker-image string        docker image reference
---registry string            docker registry
+--docker-image string        docker image reference, registry host included
 --docker-user string         docker registry username
 --docker-pass string         docker registry password
 --plan string                app plan (required when creating)
---port int                   HTTP port (on create)
+--port int                   HTTP port (on create; required unless --public=false)
 --public                     expose the app publicly (on create) (default true)
 --replicas int               number of replicas (on create) (default 1)
 --domain stringArray         custom domain (repeatable, on create)

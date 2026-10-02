@@ -31,8 +31,7 @@ type gitSource struct {
 }
 
 type dockerSource struct {
-	Image    string `json:"image" jsonschema:"image reference, e.g. nginx:1.27"`
-	Registry string `json:"registry,omitempty" jsonschema:"registry host, if the image is not on Docker Hub"`
+	Image    string `json:"image" jsonschema:"image reference, e.g. nginx:1.27 or registry.example.com/app:1.0"`
 	Username string `json:"username,omitempty" jsonschema:"registry username"`
 	Password string `json:"password,omitempty" jsonschema:"registry password"`
 }

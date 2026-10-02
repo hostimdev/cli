@@ -38,12 +38,23 @@ var ErrDeployFailed = errors.New("deploy failed")
 //
 // It returns ErrBuildFailed / ErrDeployFailed (wrapped) on failure so callers
 // can exit non-zero.
+//
+// rolloutAfter guards a docker update: the operator creates the new ReplicaSet
+// asynchronously, so the first poll can read the previous rollout's status (an
+// old running pod, or the imagePullBackoff the update is meant to fix). When set,
+// the runtime status is ignored until lastDeployedAt moves past it. Pass nil for
+// a create, or when no rollout is expected.
+//
+// lastDeployedAt is the creation time of the Deployment's newest ReplicaSet.
+// The operator stamps hostim.dev/restarted-at into the pod template on every
+// rebuild, so even going back to an earlier image creates a new ReplicaSet.
 func PollBuild(
 	ctx context.Context,
 	c *api.ClientWithResponses,
 	project, app string,
 	interval time.Duration,
 	expectBuild bool,
+	rolloutAfter *time.Time,
 	onTick func(*api.AppStatus),
 ) (BuildResult, error) {
 	crashStreak := 0
@@ -60,6 +71,10 @@ func PollBuild(
 			if onTick != nil {
 				onTick(st)
 			}
+			// The new rollout has not been observed yet, so any status here
+			// belongs to the previous deployment.
+			awaitingRollout := !expectBuild && rolloutAfter != nil &&
+				(st.LastDeployedAt == nil || !st.LastDeployedAt.After(*rolloutAfter))
 			if expectBuild {
 				if st.BuildStatus != nil {
 					switch *st.BuildStatus {
@@ -69,6 +84,8 @@ func PollBuild(
 						return result(st), ErrBuildFailed
 					}
 				}
+			} else if awaitingRollout {
+				crashStreak = 0
 			} else if st.RuntimeStatus != nil {
 				switch *st.RuntimeStatus {
 				case api.AppStatusRuntimeStatusRunning:

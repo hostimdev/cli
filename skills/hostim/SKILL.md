@@ -76,15 +76,16 @@ hostim deploy web \
   --env LOG_LEVEL=debug
 ```
 
-Private repositories take `--git-token`; a private registry takes `--registry`,
-`--docker-user` and `--docker-pass`.
+Private repositories take `--git-token`; a private registry takes
+`--docker-user` and `--docker-pass`, with the registry host written into the
+image (`--docker-image registry.example.com/me/app:1.2.3`).
 
 ## Facts agents get wrong
 
 - **`--port` is what makes the app reachable.** It is the port the app listens
-  on inside the container. The CLI does not enforce it, so an app created
-  without one deploys happily and serves nothing; a wrong one means the app
-  never becomes healthy. Pass it for anything that answers HTTP.
+  on inside the container. Creating a public app (the default) without one
+  fails; a worker with no HTTP takes `--public=false` instead. A wrong port
+  means the app never becomes healthy.
 - **Deploying from Git needs a Dockerfile in the repository.** There is no
   buildpack. If the repo has none, build and push an image yourself and deploy
   with `--docker-image`.

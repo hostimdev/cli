@@ -407,7 +407,7 @@ type App struct {
 			// Password The docker registry password. Write-only: accepted on create/update but never returned in cleartext on read; read responses return "***" when a password is set. Send "***" back unchanged to keep the stored value.
 			Password *string `json:"password,omitempty"`
 
-			// Registry The docker registry
+			// Registry The docker registry host, derived from the image reference. Ignored on create and update: the backend overwrites it with the host parsed out of `image`, so write the registry into the image instead (e.g. `registry.example.com/me/app:1.0`). Not marked readOnly, so clients can send a read app back unchanged.
 			Registry *string `json:"registry,omitempty"`
 
 			// Username The docker username

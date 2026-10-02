@@ -171,7 +171,7 @@ func TestPollBuild(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			res, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, true, nil)
+			res, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, true, nil, nil)
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
@@ -229,7 +229,7 @@ func TestPollBuildDocker(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			res, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, false, nil)
+			res, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, false, nil, nil)
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
@@ -237,6 +237,47 @@ func TestPollBuildDocker(t *testing.T) {
 				t.Errorf("end runtime status = %q, want %q", res.RuntimeStatus, tc.wantEnd)
 			}
 		})
+	}
+}
+
+// TestPollBuildDockerWaitsForRollout covers the update case HOS-669: the first
+// polls still show the previous pod's imagePullBackoff. With rolloutAfter set,
+// that status must be ignored until lastDeployedAt advances, then the new
+// rollout's outcome decides.
+func TestPollBuildDockerWaitsForRollout(t *testing.T) {
+	prev := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	statuses := []struct {
+		runtime  string
+		deployed string
+	}{
+		{"imagePullBackoff", "2026-10-02T12:00:00Z"}, // previous rollout, still showing
+		{"imagePullBackoff", "2026-10-02T12:00:00Z"},
+		{"pending", "2026-10-02T12:00:20Z"}, // new ReplicaSet observed
+		{"running", "2026-10-02T12:00:20Z"},
+	}
+	var idx int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i := atomic.AddInt32(&idx, 1) - 1
+		if int(i) >= len(statuses) {
+			i = int32(len(statuses) - 1)
+		}
+		s := statuses[i]
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"buildStatus":"","runtimeStatus":"` + s.runtime + `","lastDeployedAt":"` + s.deployed + `"}`))
+	}))
+	defer srv.Close()
+
+	c, err := New(config.Resolved{Token: "t", APIURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, false, &prev, nil)
+	if err != nil {
+		t.Fatalf("err = %v, want nil (the previous rollout's failure must be ignored)", err)
+	}
+	if res.RuntimeStatus != api.AppStatusRuntimeStatusRunning {
+		t.Errorf("end runtime status = %q, want running", res.RuntimeStatus)
 	}
 }
 
@@ -253,7 +294,7 @@ func TestPollBuildCancels(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := PollBuild(ctx, c, "proj", "app", 5*time.Millisecond, true, nil); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := PollBuild(ctx, c, "proj", "app", 5*time.Millisecond, true, nil, nil); !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v, want DeadlineExceeded", err)
 	}
 }
