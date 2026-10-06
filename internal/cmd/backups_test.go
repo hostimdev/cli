@@ -315,8 +315,8 @@ func TestDownloadAlreadyComplete(t *testing.T) {
 	if _, _, gets, _ := srv.counts(); gets != 0 {
 		t.Errorf("url gets = %d, want 0 for an already complete file", gets)
 	}
-	if !strings.Contains(errW.String(), "Already downloaded.") {
-		t.Errorf("stderr = %q, want the already-downloaded notice", errW.String())
+	if errW.Len() != 0 {
+		t.Errorf("stderr = %q, want nothing: the command prints the already-downloaded notice", errW.String())
 	}
 }
 
@@ -347,11 +347,43 @@ func TestDownloadConflictMessage(t *testing.T) {
 func TestRetentionLine(t *testing.T) {
 	n := func(v int) *int { return &v }
 	got := retentionLine(api.BackupRetention{KeepLast: n(3), KeepDaily: n(7), KeepWeekly: n(4), KeepMonthly: n(6)})
-	if got != "Retention: last 3, daily 7, weekly 4, monthly 6" {
+	if got != "We keep: last 3, daily 7, weekly 4, monthly 6." {
 		t.Errorf("retentionLine = %q", got)
 	}
-	if got := retentionLine(api.BackupRetention{}); got != "Retention: none" {
+	if got := retentionLine(api.BackupRetention{KeepDaily: n(7)}); got != "We keep 7 days." {
+		t.Errorf("daily retentionLine = %q", got)
+	}
+	if got := retentionLine(api.BackupRetention{}); got != "" {
 		t.Errorf("empty retentionLine = %q", got)
+	}
+}
+
+func TestScheduleLine(t *testing.T) {
+	old := time.Local
+	time.Local = time.FixedZone("XST", 2*60*60)
+	t.Cleanup(func() { time.Local = old })
+
+	next := time.Date(2026, 10, 7, 9, 43, 0, 0, time.UTC)
+	if got, want := scheduleLine("43 9 * * *", &next), "Backed up daily at 11:43 XST (09:43 UTC). Next run: 2026-10-07 11:43 XST."; got != want {
+		t.Errorf("scheduleLine = %q, want %q", got, want)
+	}
+	if got, want := scheduleLine("0 */6 * * *", nil), "Schedule: 0 */6 * * * (UTC)."; got != want {
+		t.Errorf("scheduleLine = %q, want %q", got, want)
+	}
+}
+
+func TestProgressFinishNonTerminal(t *testing.T) {
+	var errW bytes.Buffer
+	pw := &progressWriter{w: io.Discard, errW: &errW, total: 10}
+	_, _ = pw.Write([]byte("12345"))
+	_, _ = pw.Write([]byte("67890"))
+	pw.finish()
+	if got, want := errW.String(), "5B / 10B (50%)\n10B / 10B (100%)\n"; got != want {
+		t.Errorf("progress = %q, want %q", got, want)
+	}
+	pw.finish()
+	if strings.Count(errW.String(), "\n") != 2 {
+		t.Errorf("finish repeated the last line: %q", errW.String())
 	}
 }
 
@@ -367,7 +399,7 @@ func TestHumanBytes(t *testing.T) {
 func TestUnpackHint(t *testing.T) {
 	for name, want := range map[string]string{
 		"main-20261001-1020.sql.zst": "Unpack with: zstd -d main-20261001-1020.sql.zst",
-		"data-20261001-1020.tar.zst": "Unpack with: tar --zstd -xf data-20261001-1020.tar.zst",
+		"data-20261001-1020.tar.zst": "Unpack with: tar --zstd -xf data-20261001-1020.tar.zst (it unpacks into a folder named after the volume)",
 		"old.sql":                    "",
 	} {
 		if got := unpackHint(name); got != want {

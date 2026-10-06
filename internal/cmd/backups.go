@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,21 +94,24 @@ func backupsOverview(cmd *cobra.Command, c *cli) error {
 		fmt.Fprintln(cmd.OutOrStdout(), "Backups are not available for this project yet.")
 		return nil
 	}
+	out := cmd.OutOrStdout()
 	rows := make([][]string, 0, len(ov.Resources))
 	for _, r := range ov.Resources {
 		rows = append(rows, []string{r.Kind, r.Name, backupTime(r.LastBackupTime)})
 	}
+	if len(rows) == 0 {
+		fmt.Fprintln(out, "Nothing to back up yet. Add a database or volume, and the next run backs it up.")
+	} else if err := c.printer.Table([]string{"KIND", "NAME", "LAST BACKUP (" + localZone() + ")"}, rows); err != nil {
+		return err
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, scheduleLine(ov.Schedule, ov.NextRunTime))
+	if keep := retentionLine(ov.Retention); keep != "" {
+		fmt.Fprintln(out, keep)
+	}
 	if len(rows) > 0 {
-		if err := c.printer.Table([]string{"KIND", "NAME", "LAST BACKUP"}, rows); err != nil {
-			return err
-		}
+		fmt.Fprintln(out, "List backups: hostim backups ls <name>")
 	}
-	schedule := fmt.Sprintf("Schedule: %s UTC", ov.Schedule)
-	if ov.NextRunTime != nil {
-		schedule += fmt.Sprintf(" (next run %s)", ov.NextRunTime.Local().Format(time.RFC3339))
-	}
-	fmt.Fprintln(cmd.OutOrStdout(), schedule)
-	fmt.Fprintln(cmd.OutOrStdout(), retentionLine(ov.Retention))
 	return nil
 }
 
@@ -123,35 +127,49 @@ func backupsListCmd(c *cli) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			name := args[0]
-			k, err := resolveBackupKind(cmd.Context(), cl, project, name, kind)
+			items, err := listResourceBackups(cmd.Context(), cl, project, args[0], kind)
 			if err != nil {
 				return err
 			}
-			resp, err := cl.ListBackupsWithResponse(cmd.Context(), project,
-				&api.ListBackupsParams{Kind: k, Name: name})
-			if err != nil {
-				return err
-			}
-			if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
-				return err
-			}
-			var items []api.Backup
-			if resp.JSON200 != nil {
-				items = resp.JSON200.Items
-			}
-			sort.SliceStable(items, func(i, j int) bool {
-				return items[i].Time.After(items[j].Time)
-			})
 			rows := make([][]string, 0, len(items))
 			for _, b := range items {
-				rows = append(rows, []string{b.Id, backupTime(&b.Time), b.Trigger, humanBytes(b.SizeBytes)})
+				// Backups made before the operator recorded sizes have none.
+				size := "-"
+				if b.SizeBytes != nil {
+					size = humanBytes(*b.SizeBytes)
+				}
+				rows = append(rows, []string{b.Id, backupTime(&b.Time), b.Trigger, size})
 			}
-			return c.printer.Render(items, []string{"ID", "TIME", "TRIGGER", "SIZE"}, rows)
+			// The size is the data before compression, not the download size.
+			return c.printer.Render(items, []string{"ID", "TIME (" + localZone() + ")", "TRIGGER", "DATA SIZE"}, rows)
 		},
 	}
 	cmd.Flags().StringVar(&kind, "kind", "", "resource kind: postgres, mysql or volume (skips the lookup)")
 	return cmd
+}
+
+// listResourceBackups returns the backups of one database or volume, newest
+// first.
+func listResourceBackups(ctx context.Context, cl *api.ClientWithResponses, project, name, kind string) ([]api.Backup, error) {
+	k, err := resolveBackupKind(ctx, cl, project, name, kind)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := cl.ListBackupsWithResponse(ctx, project, &api.ListBackupsParams{Kind: k, Name: name})
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
+		return nil, err
+	}
+	var items []api.Backup
+	if resp.JSON200 != nil {
+		items = resp.JSON200.Items
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].Time.After(items[j].Time)
+	})
+	return items, nil
 }
 
 // resolveBackupKind finds the kind of a database or volume by name. An explicit
@@ -199,17 +217,31 @@ func resolveBackupKind(ctx context.Context, cl *api.ClientWithResponses, project
 func userErr(format string, args ...any) error { return fmt.Errorf(format, args...) }
 
 func backupsDownloadCmd(c *cli) *cobra.Command {
-	var file string
+	var file, kind string
+	var latest bool
 	cmd := &cobra.Command{
-		Use:   "download <id>",
+		Use:   "download <id> | --latest <resource>",
 		Short: "Download one backup file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if kind != "" && !latest {
+				return fmt.Errorf("--kind only works with --latest")
+			}
 			cl, project, err := c.clientAndProject(cmd.Context())
 			if err != nil {
 				return err
 			}
 			id := args[0]
+			if latest {
+				items, err := listResourceBackups(cmd.Context(), cl, project, args[0], kind)
+				if err != nil {
+					return err
+				}
+				if len(items) == 0 {
+					return userErr("%s has no backups yet.", args[0])
+				}
+				id = items[0].Id
+			}
 
 			// Ctrl-C stops the wait without killing the process, so the
 			// command can report that the download is still prepared.
@@ -231,6 +263,7 @@ func backupsDownloadCmd(c *cli) *cobra.Command {
 			if target == "-" && c.jsonOut() {
 				return fmt.Errorf("-f - cannot be combined with -o json")
 			}
+			already := target != "-" && backupComplete(dl, target)
 			refresh := func() (*api.BackupDownload, error) {
 				return prepareDownload(ctx, cl, project, id, errW)
 			}
@@ -244,7 +277,11 @@ func backupsDownloadCmd(c *cli) *cobra.Command {
 				return p.JSON(final)
 			}
 			if target != "-" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Downloaded %s.\n", target)
+				if already {
+					fmt.Fprintf(cmd.OutOrStdout(), "Already downloaded %s.\n", target)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "Downloaded %s.\n", target)
+				}
 				if hint := unpackHint(target); hint != "" {
 					fmt.Fprintln(cmd.OutOrStdout(), hint)
 				}
@@ -253,6 +290,8 @@ func backupsDownloadCmd(c *cli) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&file, "file", "f", "", "write to this file (default: the server file name; - for stdout)")
+	cmd.Flags().BoolVar(&latest, "latest", false, "download the newest backup of the named database or volume")
+	cmd.Flags().StringVar(&kind, "kind", "", "with --latest: resource kind postgres, mysql or volume (skips the lookup)")
 	return cmd
 }
 
@@ -356,7 +395,6 @@ func fetchToFile(ctx context.Context, dl *api.BackupDownload, target string, std
 	refreshed := false
 	for attempt := 0; ; attempt++ {
 		if backupComplete(dl, target) {
-			fmt.Fprintln(errW, "Already downloaded.")
 			return dl, nil
 		}
 
@@ -454,9 +492,7 @@ func fetchOnce(ctx context.Context, dl *api.BackupDownload, target string, errW 
 	if _, err := io.Copy(pw, resp.Body); err != nil {
 		return err
 	}
-	if pw.term {
-		fmt.Fprintln(errW)
-	}
+	pw.finish()
 	return nil
 }
 
@@ -486,9 +522,7 @@ func streamToStdout(ctx context.Context, dl *api.BackupDownload, stdout, errW io
 	if _, err := io.Copy(pw, resp.Body); err != nil {
 		return err
 	}
-	if pw.term {
-		fmt.Fprintln(errW)
-	}
+	pw.finish()
 	return nil
 }
 
@@ -500,6 +534,8 @@ type progressWriter struct {
 	done  int64
 	term  bool
 	last  time.Time
+	// reported is the byte count of the last line, so finish does not repeat it.
+	reported int64
 }
 
 func (p *progressWriter) Write(b []byte) (int, error) {
@@ -515,8 +551,21 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// finish ends the progress output: a newline after the overwritten terminal
+// line, or a last line at the final count, so a log does not end mid-transfer.
+func (p *progressWriter) finish() {
+	if p.term {
+		fmt.Fprintln(p.errW)
+		return
+	}
+	if p.last.IsZero() || p.reported != p.done {
+		p.report("", time.Now())
+	}
+}
+
 func (p *progressWriter) report(prefix string, now time.Time) {
 	p.last = now
+	p.reported = p.done
 	total := ""
 	if p.total > 0 {
 		total = fmt.Sprintf(" / %s (%d%%)", humanBytes(p.total), p.done*100/p.total)
@@ -533,7 +582,7 @@ func (p *progressWriter) report(prefix string, now time.Time) {
 func unpackHint(name string) string {
 	switch {
 	case strings.HasSuffix(name, ".tar.zst"):
-		return "Unpack with: tar --zstd -xf " + name
+		return "Unpack with: tar --zstd -xf " + name + " (it unpacks into a folder named after the volume)"
 	case strings.HasSuffix(name, ".zst"):
 		return "Unpack with: zstd -d " + name
 	}
@@ -568,7 +617,8 @@ func isTerminalWriter(w io.Writer) bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
-// backupTime renders a backup timestamp, or "-" when unknown.
+// backupTime renders a backup timestamp in local time, or "-" when unknown.
+// Table headers name the zone with localZone.
 func backupTime(t *time.Time) string {
 	if t == nil || t.IsZero() {
 		return "-"
@@ -576,8 +626,36 @@ func backupTime(t *time.Time) string {
 	return t.Local().Format("2006-01-02 15:04")
 }
 
-// retentionLine renders the restic forget policy, listing only the fields set.
+// localZone is the abbreviation of the local time zone, such as CEST.
+func localZone() string {
+	return time.Now().Format("MST")
+}
+
+// scheduleLine renders the backup schedule. A daily cron reads as local and
+// UTC time; any other schedule is shown as its raw UTC cron line.
+func scheduleLine(schedule string, next *time.Time) string {
+	line := fmt.Sprintf("Schedule: %s (UTC).", schedule)
+	if f := strings.Fields(schedule); len(f) == 5 && f[2] == "*" && f[3] == "*" && f[4] == "*" {
+		m, errM := strconv.Atoi(f[0])
+		h, errH := strconv.Atoi(f[1])
+		if errM == nil && errH == nil {
+			now := time.Now().UTC()
+			at := time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, time.UTC)
+			line = fmt.Sprintf("Backed up daily at %s (%s UTC).", at.Local().Format("15:04 MST"), at.Format("15:04"))
+		}
+	}
+	if next != nil {
+		line += " Next run: " + next.Local().Format("2006-01-02 15:04 MST") + "."
+	}
+	return line
+}
+
+// retentionLine renders the restic forget policy in the console's words, or ""
+// when there is none.
 func retentionLine(r api.BackupRetention) string {
+	if r.KeepDaily != nil && r.KeepLast == nil && r.KeepWeekly == nil && r.KeepMonthly == nil {
+		return fmt.Sprintf("We keep %d days.", *r.KeepDaily)
+	}
 	var parts []string
 	add := func(label string, v *int) {
 		if v != nil {
@@ -589,9 +667,9 @@ func retentionLine(r api.BackupRetention) string {
 	add("weekly", r.KeepWeekly)
 	add("monthly", r.KeepMonthly)
 	if len(parts) == 0 {
-		return "Retention: none"
+		return ""
 	}
-	return "Retention: " + strings.Join(parts, ", ")
+	return "We keep: " + strings.Join(parts, ", ") + "."
 }
 
 // humanBytes renders a byte count with a binary unit.
