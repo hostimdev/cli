@@ -444,20 +444,24 @@ hostim backups                        # schedule, retention and last backup per 
 hostim backups ls data                # the backups of one database or volume, newest first
 hostim backups ls main --kind postgres   # skip the kind lookup
 hostim backups download 1a2b3c4d               # prepare, then download
+hostim backups download --latest data          # the newest backup of one resource
 hostim backups download 1a2b3c4d -f -           # write to stdout (no resume)
 ```
 
 `hostim backups` lists every database and volume with the time of its last
-backup, then the schedule and the retention policy. `hostim backups ls` needs
+backup, then the schedule and the retention policy. Times are in your local
+time zone. `hostim backups ls` shows the size of the data before compression;
+the downloaded file is smaller. `hostim backups ls` needs
 the resource name; if a database and a volume share a name, pass
-`--kind postgres|mysql|volume`. `hostim backups download` prepares the file
+`--kind postgres|mysql|volume`. `hostim backups download --latest <resource>`
+skips the ID lookup and takes the newest backup. `hostim backups download` prepares the file
 first, which can take minutes for a large backup, then downloads it. If the
 transfer is interrupted, run the same command again: it resumes from the bytes
 already on disk. `-f -` writes to stdout and cannot resume.
 
 Downloads are compressed with zstd. A database backup is a `.sql.zst` file
 (unpack with `zstd -d <file>`), a volume backup a `.tar.zst` archive (unpack
-with `tar --zstd -xf <file>`).
+with `tar --zstd -xf <file>`; it unpacks into a folder named after the volume).
 
 ### templates
 

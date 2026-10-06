@@ -143,6 +143,7 @@ Backups:
 hostim backups                    # schedule, retention and last backup per resource
 hostim backups ls main --kind postgres   # the backups of one resource, newest first
 hostim backups download <id>      # prepare then download; re-run to resume
+hostim backups download --latest main   # the newest backup of one resource
 ```
 
 `hostim backups download` prepares the file first, which can take minutes for a

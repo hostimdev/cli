@@ -562,8 +562,8 @@ type Backup struct {
 	// Id The restic short snapshot ID
 	Id string `json:"id"`
 
-	// SizeBytes restic's data_added for this backup
-	SizeBytes int64 `json:"sizeBytes"`
+	// SizeBytes Full size of the backed up data. Missing for backups made before sizes were recorded.
+	SizeBytes *int64 `json:"sizeBytes,omitempty"`
 
 	// Time When the backup ran
 	Time time.Time `json:"time"`
@@ -613,7 +613,7 @@ type BackupItem struct {
 	// Phase Pending, Running, Succeeded or Failed
 	Phase string `json:"phase"`
 
-	// SizeBytes restic's data_added for this item
+	// SizeBytes Full size of the backed up data. Missing for backups made before sizes were recorded.
 	SizeBytes *int64 `json:"sizeBytes,omitempty"`
 }
 
