@@ -110,35 +110,30 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 	// srcType is the app's final deployment source ("git" or "docker"), used
 	// below to decide whether to wait on a build or on runtime readiness.
 	var srcType string
-	// rolloutAfter is set on a docker update that rolls a new ReplicaSet: the
-	// lastDeployedAt observed before the update, used to wait out the previous
-	// pod's status (see PollBuild). Nil means no rollout is expected.
-	var rolloutAfter *time.Time
+	// since is the app's state before this run changes it (nil on create), so
+	// the poll does not mistake the previous build or rollout for this one.
+	var since *client.Baseline
 	// action is what this run did to the app, reported in the -o json result.
 	action := "rebuilding"
 
 	if exists {
 		app := *getResp.JSON200
-		// A docker update that changes the image reference rolls a new ReplicaSet.
-		// Capture the previous rollout time before the update so the poll can tell
-		// the new rollout apart from the old pod's status (see PollBuild).
-		if f.dockerImage != "" && f.dockerImage != dockerImageOf(app) {
-			st, err := a.GetAppStatusWithResponse(ctx, project, appName)
-			if err != nil {
-				return err
-			}
-			if err := checkResp(st.StatusCode(), st.Body); err != nil {
-				return err
-			}
-			if st.JSON200 != nil {
-				rolloutAfter = st.JSON200.LastDeployedAt
-			}
+		since, err = client.NewBaseline(ctx, a, project, appName)
+		if err != nil {
+			return err
 		}
+		oldImage := dockerImageOf(app)
 		changed, err := applySource(&app, f)
 		if err != nil {
 			return err
 		}
 		srcType = deploymentType(app.DeploymentSource)
+		// A rebuild does not roll a docker app's pods, so only a new image
+		// guarantees a new rollout to wait for. Otherwise the current runtime
+		// status is the answer.
+		if srcType == string(api.Docker) && dockerImageOf(app) == oldImage {
+			since.LastDeployedAt = nil
+		}
 		if changed {
 			// domains/volumeMounts are required, non-nullable arrays; an app
 			// fetched with none set has them as nil, which marshals to null and
@@ -198,12 +193,12 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 
 	var lastBuild api.AppStatusBuildStatus
 	var lastRuntime api.AppStatusRuntimeStatus
-	final, err := client.PollBuild(ctx, a, project, appName, f.interval, expectBuild, rolloutAfter, func(st *api.AppStatus) {
+	final, err := client.PollBuild(ctx, a, project, appName, f.interval, expectBuild, since, func(st *api.AppStatus) {
 		if st.BuildStatus != nil && *st.BuildStatus != "" && *st.BuildStatus != lastBuild {
 			lastBuild = *st.BuildStatus
 			c.progress(cmd, "  build: %s\n", *st.BuildStatus)
 		}
-		if !expectBuild && st.RuntimeStatus != nil && *st.RuntimeStatus != lastRuntime {
+		if st.RuntimeStatus != nil && *st.RuntimeStatus != lastRuntime {
 			lastRuntime = *st.RuntimeStatus
 			c.progress(cmd, "  runtime: %s\n", *st.RuntimeStatus)
 		}
@@ -301,9 +296,6 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 			cur.Git = &gitSource{}
 		}
 		cur.Git.Url = f.git
-		setOpt(&cur.Git.Branch, f.branch)
-		setOpt(&cur.Git.Dockerfilepath, f.dockerfile)
-		setOpt(&cur.Git.Token, f.gitToken)
 		cur.Docker = nil
 		changed = true
 	}
@@ -313,9 +305,26 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 			cur.Docker = &dockSource{}
 		}
 		cur.Docker.Image = f.dockerImage
+		cur.Git = nil
+		changed = true
+	}
+	// Source options patch the current source on their own, so --branch alone
+	// switches the branch of a git app (HOS-694) instead of being dropped.
+	if f.branch != "" || f.dockerfile != "" || f.gitToken != "" {
+		if cur.Type != string(api.Git) || cur.Git == nil {
+			return false, fmt.Errorf("--branch, --dockerfile and --git-token need a git source: pass --git <url>")
+		}
+		setOpt(&cur.Git.Branch, f.branch)
+		setOpt(&cur.Git.Dockerfilepath, f.dockerfile)
+		setOpt(&cur.Git.Token, f.gitToken)
+		changed = true
+	}
+	if f.dockerUser != "" || f.dockerPass != "" {
+		if cur.Type != string(api.Docker) || cur.Docker == nil {
+			return false, fmt.Errorf("--docker-user and --docker-pass need a docker source: pass --docker-image <image>")
+		}
 		setOpt(&cur.Docker.Username, f.dockerUser)
 		setOpt(&cur.Docker.Password, f.dockerPass)
-		cur.Git = nil
 		changed = true
 	}
 	if f.healthCheckPathSet {

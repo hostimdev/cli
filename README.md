@@ -332,6 +332,21 @@ hostim env push -a web --file .env --replace  # replace the whole set
 
 Changing environment variables restarts the app.
 
+To reach another app in the same project, use its internal DNS name
+`app-<name>-service` on its HTTP port, for example
+`API_URL=http://app-api-service:8080`. `hostim status <app>` shows it as
+"Internal DNS". Apps without an HTTP port have none.
+
+Values can reference database variables with `$(...)`, also inside a longer
+value such as a DSN. They are expanded at container start, so `hostim env get`
+shows the literal text. See [Placeholders in envVars](#placeholders-in-envvars)
+for every variable name.
+
+```sh
+hostim env set -a web \
+  'DATABASE_URL=mysql://$(MAIN_MYSQL_USER):$(MAIN_MYSQL_PASSWORD)@$(MAIN_MYSQL_HOST):$(MAIN_MYSQL_PORT)/$(MAIN_MYSQL_DATABASE)'
+```
+
 ### domain
 
 ```sh

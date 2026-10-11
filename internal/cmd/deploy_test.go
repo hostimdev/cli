@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -78,5 +79,32 @@ func TestApplySourceHealthCheckAndCommand(t *testing.T) {
 	}
 	if str(app.HealthCheckPath) != "" || str(app.CommandOverride) != "" {
 		t.Errorf("expected both cleared, got %q %q", str(app.HealthCheckPath), str(app.CommandOverride))
+	}
+}
+
+// HOS-694: --branch without --git must patch the branch of a git app and keep
+// its URL, and must fail on a docker app instead of being dropped.
+func TestApplySourceBranchOnly(t *testing.T) {
+	var app api.App
+	if err := json.Unmarshal([]byte(`{"deploymentSource":{"type":"git","git":{"url":"https://example.com/r.git","branch":"old","dockerfilepath":"Dockerfile"}}}`), &app); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := applySource(&app, &deployFlags{branch: "main"}); err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	src, err := loadSource(app.DeploymentSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.Git.Url != "https://example.com/r.git" || str(src.Git.Branch) != "main" || str(src.Git.Dockerfilepath) != "Dockerfile" {
+		t.Errorf("git source = %+v", *src.Git)
+	}
+
+	var dock api.App
+	if err := json.Unmarshal([]byte(`{"deploymentSource":{"type":"docker","docker":{"image":"nginx"}}}`), &dock); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applySource(&dock, &deployFlags{branch: "main"}); err == nil {
+		t.Error("--branch on a docker app: want an error")
 	}
 }

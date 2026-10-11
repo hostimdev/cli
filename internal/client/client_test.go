@@ -163,7 +163,7 @@ func TestPollBuild(t *testing.T) {
 				bs := tc.statuses[i]
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(200)
-				_, _ = w.Write([]byte(`{"buildStatus":"` + string(bs) + `"}`))
+				_, _ = w.Write([]byte(`{"buildStatus":"` + string(bs) + `","runtimeStatus":"running"}`))
 			}))
 			defer srv.Close()
 
@@ -272,13 +272,126 @@ func TestPollBuildDockerWaitsForRollout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, false, &prev, nil)
+	res, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, false, &Baseline{LastDeployedAt: &prev}, nil)
 	if err != nil {
 		t.Fatalf("err = %v, want nil (the previous rollout's failure must be ignored)", err)
 	}
 	if res.RuntimeStatus != api.AppStatusRuntimeStatusRunning {
 		t.Errorf("end runtime status = %q, want running", res.RuntimeStatus)
 	}
+}
+
+// statusServer serves the given app statuses in order (repeating the last) and
+// the given events.
+func statusServer(t *testing.T, statuses []string, events string) *api.ClientWithResponses {
+	t.Helper()
+	var idx int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		if strings.HasSuffix(r.URL.Path, "/events") {
+			_, _ = w.Write([]byte(events))
+			return
+		}
+		i := atomic.AddInt32(&idx, 1) - 1
+		if int(i) >= len(statuses) {
+			i = int32(len(statuses) - 1)
+		}
+		_, _ = w.Write([]byte(statuses[i]))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New(config.Resolved{Token: "t", APIURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// TestPollBuildGitUpdate covers HOS-694: right after a rebuild request the
+// status still shows the previous build and rollout. The poll must not end on
+// them, and must wait for the new rollout after the new build.
+func TestPollBuildGitUpdate(t *testing.T) {
+	built := time.Date(2026, 10, 10, 15, 0, 0, 0, time.UTC)
+	deployed := built
+	const old = `"lastBuiltAt":"2026-10-10T15:00:00Z","lastDeployedAt":"2026-10-10T15:00:00Z"`
+	const fresh = `"lastBuiltAt":"2026-10-10T15:02:00Z","lastDeployedAt":"2026-10-10T15:02:00Z"`
+
+	t.Run("stale success is ignored", func(t *testing.T) {
+		c := statusServer(t, []string{
+			`{"buildStatus":"succeeded","runtimeStatus":"running",` + old + `}`,
+			`{"buildStatus":"running","runtimeStatus":"running",` + old + `}`,
+			`{"buildStatus":"succeeded","runtimeStatus":"running","lastBuiltAt":"2026-10-10T15:02:00Z","lastDeployedAt":"2026-10-10T15:00:00Z"}`,
+			`{"buildStatus":"succeeded","runtimeStatus":"pending",` + fresh + `}`,
+			`{"buildStatus":"succeeded","runtimeStatus":"running",` + fresh + `}`,
+		}, `[]`)
+		var ticks []string
+		res, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, true,
+			&Baseline{BuildStatus: "succeeded", LastBuiltAt: &built, LastDeployedAt: &deployed},
+			func(st *api.AppStatus) {
+				b, r := "-", "-"
+				if st.BuildStatus != nil {
+					b = string(*st.BuildStatus)
+				}
+				if st.RuntimeStatus != nil {
+					r = string(*st.RuntimeStatus)
+				}
+				ticks = append(ticks, b+"/"+r)
+			})
+		if err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if !res.Status.LastDeployedAt.After(deployed) {
+			t.Errorf("ended on the old rollout: %v", res.Status.LastDeployedAt)
+		}
+		want := []string{"-/-", "running/-", "succeeded/-", "succeeded/pending", "succeeded/running"}
+		if strings.Join(ticks, " ") != strings.Join(want, " ") {
+			t.Errorf("ticks = %v, want %v", ticks, want)
+		}
+	})
+
+	t.Run("stale failure is ignored", func(t *testing.T) {
+		c := statusServer(t, []string{
+			`{"buildStatus":"failed","runtimeStatus":"running",` + old + `}`,
+			`{"buildStatus":"running","runtimeStatus":"running",` + old + `}`,
+			`{"buildStatus":"succeeded","runtimeStatus":"running",` + fresh + `}`,
+		}, `[{"reason":"BuildFailed","message":"Build failed","timestamp":"2026-10-10T14:00:00Z","project":"p","source":"infra"}]`)
+		b, err := NewBaseline(context.Background(), c, "proj", "app")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, true, b, nil); err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+	})
+
+	t.Run("failing again is caught by the new event", func(t *testing.T) {
+		var calls int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			if strings.HasSuffix(r.URL.Path, "/events") {
+				ev := `{"reason":"BuildFailed","message":"Build failed","timestamp":"2026-10-10T14:00:00Z","project":"p","source":"infra"}`
+				if atomic.AddInt32(&calls, 1) > 2 {
+					ev += `,{"reason":"BuildFailed","message":"Build failed: branch \"x\" not found","timestamp":"2026-10-10T15:01:00Z","project":"p","source":"infra"}`
+				}
+				_, _ = w.Write([]byte("[" + ev + "]"))
+				return
+			}
+			_, _ = w.Write([]byte(`{"buildStatus":"failed","runtimeStatus":"running",` + old + `}`))
+		}))
+		defer srv.Close()
+		c, err := New(config.Resolved{Token: "t", APIURL: srv.URL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := NewBaseline(context.Background(), c, "proj", "app")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := PollBuild(context.Background(), c, "proj", "app", time.Millisecond, true, b, nil); !errors.Is(err, ErrBuildFailed) {
+			t.Fatalf("err = %v, want ErrBuildFailed", err)
+		}
+	})
 }
 
 func TestPollBuildCancels(t *testing.T) {
