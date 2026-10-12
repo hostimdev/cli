@@ -204,7 +204,9 @@ hostim projects export -p prod -o json        # template as JSON on stdout
 `--region` is required on create; see `hostim regions ls` for the values.
 
 `projects export` writes a desired-state template, not a backup: volume and
-database contents (data) are not exported. Costs, IDs, built-in domains and
+database contents (data) are not exported. That data is backed up on a
+schedule anyway: Postgres and MySQL databases and volumes, see
+[backups](#backups) (`hostim backups`). Costs, IDs, built-in domains and
 unused source blocks are stripped, and env var values are exported RAW — the
 file holds secrets (passwords, API keys), so store and share it like a
 password file. Docker registry passwords and git tokens are not readable
