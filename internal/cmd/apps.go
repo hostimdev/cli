@@ -13,10 +13,12 @@ func newAppsCmd(c *cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "apps",
 		Aliases: []string{"app"},
-		Short:   "Manage apps",
+		Short:   "Manage apps (alone: list them, like apps ls)",
 	}
+	ls := appsListCmd(c)
+	cmd.RunE = ls.RunE
 	cmd.AddCommand(
-		appsListCmd(c),
+		ls,
 		appsGetCmd(c),
 		newDeployCmd(c), // apps deploy (also aliased top-level)
 		appsRemoveCmd(c),

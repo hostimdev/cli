@@ -282,7 +282,7 @@ volume is deployed as a template — see [templates](#templates).
 ### apps
 
 ```sh
-hostim apps ls                    # aliases: app; ls | list
+hostim apps ls                    # aliases: app; ls | list; `hostim apps` alone does the same
 hostim apps get web
 hostim apps status                # health table for every app in the project
 hostim apps status web

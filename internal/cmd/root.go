@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -125,7 +126,52 @@ func newRootCmd(c *cli, manual string) *cobra.Command {
 		newMCPCmd(c),
 		newVersionCmd(),
 	)
+	rejectUnknownSubcommands(root)
 	return root
+}
+
+// rejectUnknownSubcommands makes every command group below the root fail on an
+// argument that is not one of its subcommands. Cobra does that only for the
+// root: a group such as "hostim env ls" printed its help and exited 0, which a
+// script or an agent reads as success. A group's own RunE (apps lists apps)
+// still runs when no argument is given.
+func rejectUnknownSubcommands(cmd *cobra.Command) {
+	for _, sub := range cmd.Commands() {
+		rejectUnknownSubcommands(sub)
+	}
+	if !cmd.HasParent() || !cmd.HasSubCommands() {
+		return
+	}
+	run := cmd.RunE
+	cmd.RunE = func(cc *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			return unknownSubcommand(cc, args[0])
+		}
+		if run != nil {
+			return run(cc, args)
+		}
+		return cc.Help()
+	}
+	// "hostim env ls -a web" fails on the flag before RunE runs. The unknown
+	// subcommand is the real mistake, so report that instead. Subcommands
+	// inherit this func; a leaf keeps the plain flag error.
+	cmd.SetFlagErrorFunc(func(cc *cobra.Command, err error) error {
+		if args := cc.Flags().Args(); cc.HasSubCommands() && len(args) > 0 {
+			return unknownSubcommand(cc, args[0])
+		}
+		return err
+	})
+}
+
+func unknownSubcommand(cmd *cobra.Command, name string) error {
+	var valid []string
+	for _, sub := range cmd.Commands() {
+		if sub.IsAvailableCommand() {
+			valid = append(valid, sub.Name())
+		}
+	}
+	return fmt.Errorf("unknown command %q for %q; valid: %s (see '%s --help')",
+		name, cmd.CommandPath(), strings.Join(valid, ", "), cmd.CommandPath())
 }
 
 // newVersionCmd mirrors --version as a subcommand, because `hostim version` is
