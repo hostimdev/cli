@@ -26,7 +26,7 @@ type deleteProjectArgs struct {
 type gitSource struct {
 	URL            string `json:"url" jsonschema:"git repository URL the Hostim API can clone"`
 	Branch         string `json:"branch,omitempty" jsonschema:"branch to build; defaults to the repository default"`
-	DockerfilePath string `json:"dockerfilepath,omitempty" jsonschema:"path to the Dockerfile inside the repository"`
+	DockerfilePath string `json:"dockerfilepath,omitempty" jsonschema:"path to the Dockerfile inside the repository; its directory is the build context, so COPY paths are relative to it"`
 	Token          string `json:"token,omitempty" jsonschema:"access token, for a private repository"`
 }
 

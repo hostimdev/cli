@@ -72,7 +72,7 @@ func newDeployCmd(c *cli) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.git, "git", "", "git repository URL")
 	fl.StringVar(&f.branch, "branch", "", "git branch")
-	fl.StringVar(&f.dockerfile, "dockerfile", "", "path to the Dockerfile in the repo")
+	fl.StringVar(&f.dockerfile, "dockerfile", "", "path to the Dockerfile in the repo; its directory is the build context")
 	fl.StringVar(&f.gitToken, "git-token", "", "token for private git repos")
 	fl.StringVar(&f.dockerImage, "docker-image", "", "docker image reference, registry host included")
 	fl.StringVar(&f.dockerUser, "docker-user", "", "docker registry username")

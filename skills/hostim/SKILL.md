@@ -89,6 +89,9 @@ image (`--docker-image registry.example.com/me/app:1.2.3`).
 - **Deploying from Git needs a Dockerfile in the repository.** There is no
   buildpack. If the repo has none, build and push an image yourself and deploy
   with `--docker-image`.
+- **The Dockerfile's directory is the build context, not the repo root.** With
+  `--dockerfile backend/Dockerfile`, write `COPY package.json .`, not
+  `COPY backend/package.json .`; files outside `backend/` are not in the build.
 - **Plan IDs are per resource kind and must be listed, not guessed.** App plans
   look like `sa-1-1` (shared app, 1 vCPU, 1 GB RAM); Postgres `sp-*`, MySQL
   `sm-*`, Redis `sr-*`, volumes `vol-*`. List them for a region:

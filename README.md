@@ -252,7 +252,7 @@ Flags:
 ```
 --git string                 git repository URL
 --branch string              git branch
---dockerfile string          path to the Dockerfile in the repo
+--dockerfile string          path to the Dockerfile in the repo; its directory is the build context
 --git-token string           token for private git repos
 --docker-image string        docker image reference, registry host included
 --docker-user string         docker registry username
