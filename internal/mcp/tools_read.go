@@ -25,6 +25,7 @@ type appLogsArgs struct {
 	App     string `json:"app" jsonschema:"app name; list them with list_apps"`
 	LogType string `json:"log_type,omitempty" jsonschema:"which stream to read: stdout (default) or build"`
 	Limit   int    `json:"limit,omitempty" jsonschema:"maximum number of log lines (default 100)"`
+	Before  string `json:"before,omitempty" jsonschema:"only lines older than this nanosecond timestamp; pass the oldest timestamp of the previous call to page back"`
 }
 
 type appEventsArgs struct {
@@ -103,7 +104,7 @@ func (s *Server) registerReadTools() {
 		})
 
 	addRead(s.srv, "get_app_logs", "Get app logs",
-		"Read recent logs for an app: the stdout stream for runtime output, or the build stream to debug a failed build.",
+		"Read an app's logs, newest first: the stdout stream (stdout and stderr of every container the app ran in the last 7 days, so lines from before a redeploy or crash are kept), or the build stream to debug a failed build. Page back with before.",
 		func(ctx context.Context, in appLogsArgs) (any, error) {
 			logType := api.GetAppLogsParamsLogType(in.LogType)
 			if in.LogType == "" {
@@ -120,10 +121,11 @@ func (s *Server) registerReadTools() {
 			if err != nil {
 				return nil, err
 			}
-			resp, err := s.api.GetAppLogsWithResponse(ctx, id, in.App, &api.GetAppLogsParams{
-				LogType: logType,
-				Limit:   limit,
-			})
+			params := &api.GetAppLogsParams{LogType: logType, Limit: limit}
+			if in.Before != "" {
+				params.Before = &in.Before
+			}
+			resp, err := s.api.GetAppLogsWithResponse(ctx, id, in.App, params)
 			if err != nil {
 				return nil, err
 			}

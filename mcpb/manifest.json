@@ -123,7 +123,7 @@
     },
     {
       "name": "get_app_logs",
-      "description": "Read recent logs for an app: the stdout stream for runtime output, or the build stream to debug a failed build."
+      "description": "Read an app's logs, newest first: the stdout stream (stdout and stderr of every container the app ran in the last 7 days, so lines from before a redeploy or crash are kept), or the build stream to debug a failed build. Page back with before."
     },
     {
       "name": "get_app_status",

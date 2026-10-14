@@ -17,26 +17,57 @@ import (
 // limit budget.
 var followInterval = 2 * time.Second
 
+// maxLines caps how far one `hostim logs` call pages back. The API serves at
+// most pageSize lines per request, so this is up to 10 requests.
+const (
+	pageSize = 1000
+	maxLines = 10000
+)
+
 func newLogsCmd(c *cli) *cobra.Command {
 	var (
-		follow bool
-		tail   int
-		since  time.Duration
-		build  bool
+		follow       bool
+		tail         int
+		since, until string
+		build        bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "logs <app>",
 		Short: "Show logs for an app",
 		Long: "Show an app's logs, oldest line first.\n" +
-			"Defaults to the running container's stdout; use --build for build logs.",
+			"Covers every container the app ran in the last 7 days, so lines from before a\n" +
+			"redeploy or a crash are still there. Defaults to stdout and stderr; use --build\n" +
+			"for build logs.\n\n" +
+			"--since and --until take a duration (2h) or a time (2026-10-14T14:00, RFC 3339 or\n" +
+			"local time). With either set, every line in the window is shown, up to 10000.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if tail < 1 || tail > 1000 {
-				return fmt.Errorf("--tail must be between 1 and 1000")
+			now := time.Now()
+			from, err := parseLogTime("--since", since, now)
+			if err != nil {
+				return err
+			}
+			to, err := parseLogTime("--until", until, now)
+			if err != nil {
+				return err
+			}
+			if !from.IsZero() && !to.IsZero() && !from.Before(to) {
+				return fmt.Errorf("--since must be before --until")
+			}
+			// A window means "show me all of it"; only a bare call keeps the
+			// short default.
+			if !cmd.Flags().Changed("tail") && (since != "" || until != "") {
+				tail = maxLines
+			}
+			if tail < 1 || tail > maxLines {
+				return fmt.Errorf("--tail must be between 1 and %d", maxLines)
 			}
 			if follow && c.printer.Format == output.FormatJSON {
 				return fmt.Errorf("--follow cannot be combined with -o json")
+			}
+			if follow && until != "" {
+				return fmt.Errorf("--follow cannot be combined with --until")
 			}
 
 			cl, project, err := c.clientAndProject(cmd.Context())
@@ -61,18 +92,12 @@ func newLogsCmd(c *cli) *cobra.Command {
 				logType = api.GetAppLogsParamsLogTypeBuild
 			}
 
-			// No cursor on the first call: the API returns the newest `tail`
-			// entries, newest first.
-			logs, err := fetchLogs(cmd, cl, project, args[0], api.GetAppLogsParams{
-				LogType: logType,
-				Limit:   tail,
-			})
+			logs, truncated, err := fetchWindow(cmd, cl, project, args[0], logType, from, to, tail)
 			if err != nil {
 				return err
 			}
-			logs = oldestFirst(logs)
-			if since > 0 {
-				logs = newerThan(logs, time.Now().Add(-since))
+			if truncated && (since != "" || until != "") {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Showing the newest %d lines of the window; raise --tail (up to 10000) or narrow --since/--until to see older ones.\n", len(logs))
 			}
 
 			if !follow {
@@ -88,16 +113,80 @@ func newLogsCmd(c *cli) *cobra.Command {
 			for _, l := range logs {
 				fmt.Fprintln(cmd.OutOrStdout(), logLine(l))
 			}
-			return followLogs(cmd, cl, project, args[0], logType, tail, cursorOf(logs), build)
+			return followLogs(cmd, cl, project, args[0], logType, min(tail, pageSize), cursorOf(logs), build)
 		},
 	}
-
 	f := cmd.Flags()
 	f.BoolVarP(&follow, "follow", "f", false, "stream new logs as they arrive")
-	f.IntVarP(&tail, "tail", "n", 100, "number of lines to fetch (1-1000)")
-	f.DurationVar(&since, "since", 0, "only show logs newer than a duration, e.g. 1h or 15m")
-	f.BoolVar(&build, "build", false, "show build logs instead of the container's stdout")
+	f.IntVarP(&tail, "tail", "n", 100, "number of lines to show, newest kept (1-10000; all of the window up to 10000 with --since/--until)")
+	f.StringVar(&since, "since", "", "only lines after this: a duration (2h) or a time (2026-10-14T14:00)")
+	f.StringVar(&until, "until", "", "only lines before this: a duration (30m) or a time (2026-10-14T15:00)")
+	f.BoolVar(&build, "build", false, "show build logs instead of the container's output")
 	return cmd
+}
+
+// parseLogTime reads a --since/--until value: a duration back from now, an
+// RFC 3339 time, or a local date and time without a zone. Empty means unset.
+func parseLogTime(flag, v string, now time.Time) (time.Time, error) {
+	if v == "" {
+		return time.Time{}, nil
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		if d <= 0 {
+			return time.Time{}, fmt.Errorf("%s must be a positive duration, e.g. 2h", flag)
+		}
+		return now.Add(-d), nil
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, nil
+	}
+	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"} {
+		if t, err := time.ParseInLocation(layout, v, time.Local); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("%s %q is neither a duration (2h) nor a time (2026-10-14T14:00)", flag, v)
+}
+
+// fetchWindow pages back from `to` (now when zero) until it reaches `from`,
+// runs out of logs, or holds `limit` lines. It returns reading order, and
+// truncated when it stopped on the limit with older lines left in the window.
+//
+// ponytail: the API's `before` cursor is exclusive, so lines sharing the exact
+// nanosecond of a page boundary can drop out; switch to an offset cursor if
+// that ever shows up in practice.
+func fetchWindow(cmd *cobra.Command, cl *api.ClientWithResponses, project, app string, logType api.GetAppLogsParamsLogType, from, to time.Time, limit int) ([]api.Log, bool, error) {
+	var out []api.Log
+	var before string
+	if !to.IsZero() {
+		before = strconv.FormatInt(to.UnixNano(), 10)
+	}
+	cutoff := int64(0)
+	if !from.IsZero() {
+		cutoff = from.UnixNano()
+	}
+	for len(out) < limit {
+		params := api.GetAppLogsParams{LogType: logType, Limit: min(pageSize, limit-len(out))}
+		if before != "" {
+			params.Before = &before
+		}
+		page, err := fetchLogs(cmd, cl, project, app, params)
+		if err != nil {
+			return nil, false, err
+		}
+		page = oldestFirst(page)
+		for i := len(page) - 1; i >= 0 && len(out) < limit; i-- {
+			if logNanos(page[i]) < cutoff {
+				return oldestFirst(out), false, nil
+			}
+			out = append(out, page[i])
+		}
+		if len(page) < params.Limit {
+			return oldestFirst(out), false, nil
+		}
+		before = page[0].Timestamp
+	}
+	return oldestFirst(out), true, nil
 }
 
 // followLogs polls for entries newer than cursor until the process is
@@ -226,19 +315,6 @@ func oldestFirst(logs []api.Log) []api.Log {
 	sort.SliceStable(out, func(i, j int) bool {
 		return logNanos(out[i]) < logNanos(out[j])
 	})
-	return out
-}
-
-// newerThan drops entries older than t. The API has no `since` parameter — it
-// serves a fixed retention window — so --since is applied here.
-func newerThan(logs []api.Log, t time.Time) []api.Log {
-	cutoff := t.UnixNano()
-	out := make([]api.Log, 0, len(logs))
-	for _, l := range logs {
-		if logNanos(l) >= cutoff {
-			out = append(out, l)
-		}
-	}
 	return out
 }
 

@@ -298,11 +298,16 @@ hostim status                          # every app in the project
 hostim status web                      # one app: build + runtime status
 hostim status -o json
 
-hostim logs web                        # last 100 container lines, oldest first
+hostim logs web                        # last 100 lines, oldest first
 hostim logs web -f                     # stream new lines
-hostim logs web -n 500                 # 1-1000 lines
-hostim logs web --since 15m            # only lines newer than a duration
+hostim logs web -n 500                 # 1-10000 lines
+hostim logs web --since 2h             # every line of the last 2 hours (up to 10000)
+hostim logs web --since 2026-10-14T14:00 --until 2026-10-14T14:10   # one time window
+hostim logs web --since 1h | grep -i error   # search
 hostim logs web --build --since 1h     # build logs (git-built apps only)
+
+# Logs cover stdout and stderr of every container the app ran in the last
+# 7 days, so lines from before a redeploy or a crash are still there.
 
 hostim events web                      # status history: why the app changed state
 hostim events web -f                   # keep printing new events
