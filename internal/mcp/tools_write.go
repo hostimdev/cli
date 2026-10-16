@@ -118,6 +118,12 @@ type downloadBackupArgs struct {
 	BackupId string `json:"backup_id" jsonschema:"backup ID; list them with list_backups"`
 }
 
+type createBackupArgs struct {
+	Project string `json:"project" jsonschema:"project name or hpr-... ID; list them with list_projects"`
+	Kind    string `json:"kind,omitempty" jsonschema:"resource kind: postgres, mysql or volume; pass together with name to back up one resource"`
+	Name    string `json:"name,omitempty" jsonschema:"database or volume name; pass together with kind to back up one resource"`
+}
+
 func (s *Server) registerWriteTools() {
 	addWrite(s.srv, "create_project", "Create project",
 		"Create a new project in a region. A project is the container every app, database and volume lives in.",
@@ -433,6 +439,32 @@ func (s *Server) registerWriteTools() {
 				out = resp.JSON201
 			}
 			return ok(out, resp.StatusCode(), resp.Body)
+		})
+
+	addWrite(s.srv, "create_backup", "Create backup",
+		"Start a manual backup of the whole project, or of one database or volume when kind and name are given. The last 3 manual backups per resource are kept; older ones are pruned. Poll list_backups for the run's phase.",
+		false, func(ctx context.Context, in createBackupArgs) (any, error) {
+			id, err := s.projectID(ctx, in.Project)
+			if err != nil {
+				return nil, err
+			}
+			body := api.CreateBackupJSONRequestBody{}
+			switch {
+			case in.Kind == "" && in.Name == "":
+			case in.Kind != "" && in.Name != "":
+				kind := api.BackupItemRefKind(in.Kind)
+				if !kind.Valid() {
+					return nil, fmt.Errorf("kind must be postgres, mysql or volume, got %q", in.Kind)
+				}
+				body = api.CreateBackupJSONRequestBody{Kind: kind, Name: in.Name}
+			default:
+				return nil, fmt.Errorf("pass both kind and name to back up one resource, or neither for the whole project")
+			}
+			resp, err := s.api.CreateBackupWithResponse(ctx, id, body)
+			if err != nil {
+				return nil, err
+			}
+			return ok(resp.JSON202, resp.StatusCode(), resp.Body)
 		})
 }
 

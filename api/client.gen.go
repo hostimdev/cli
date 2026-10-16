@@ -104,6 +104,27 @@ func (e AppStatusRuntimeStatus) Valid() bool {
 	}
 }
 
+// Defines values for BackupItemRefKind.
+const (
+	BackupItemRefKindMysql    BackupItemRefKind = "mysql"
+	BackupItemRefKindPostgres BackupItemRefKind = "postgres"
+	BackupItemRefKindVolume   BackupItemRefKind = "volume"
+)
+
+// Valid indicates whether the value is a known member of the BackupItemRefKind enum.
+func (e BackupItemRefKind) Valid() bool {
+	switch e {
+	case BackupItemRefKindMysql:
+		return true
+	case BackupItemRefKindPostgres:
+		return true
+	case BackupItemRefKindVolume:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeviceTokenResultStatus.
 const (
 	DeviceTokenResultStatusApproved DeviceTokenResultStatus = "approved"
@@ -613,9 +634,23 @@ type BackupItem struct {
 	// Phase Pending, Running, Succeeded or Failed
 	Phase string `json:"phase"`
 
+	// Pruned Restic removed this snapshot under the retention policy; it can no longer be downloaded
+	Pruned *bool `json:"pruned,omitempty"`
+
 	// SizeBytes Full size of the backed up data. Missing for backups made before sizes were recorded.
 	SizeBytes *int64 `json:"sizeBytes,omitempty"`
 }
+
+// BackupItemRef Selects one database or volume for a manual backup. Both fields empty or missing means the whole project.
+type BackupItemRef struct {
+	Kind BackupItemRefKind `json:"kind,omitempty"`
+
+	// Name Name of the database or volume
+	Name string `json:"name,omitempty"`
+}
+
+// BackupItemRefKind defines model for BackupItemRef.Kind.
+type BackupItemRefKind string
 
 // BackupList The backups of one resource, newest first.
 type BackupList struct {
@@ -626,6 +661,9 @@ type BackupList struct {
 type BackupOverview struct {
 	// Enabled Whether backups are configured for the project
 	Enabled bool `json:"enabled"`
+
+	// ManualRetention The restic forget policy read from the project, read-only. A field that is not set is not passed to restic.
+	ManualRetention *BackupRetention `json:"manualRetention,omitempty"`
 
 	// NextRunTime When the next scheduled backup runs, omitted when the schedule is empty or invalid
 	NextRunTime *time.Time `json:"nextRunTime,omitempty"`
@@ -1246,6 +1284,9 @@ type AddDomainJSONRequestBody = AddDomainJSONBody
 // SetAppEnvJSONRequestBody defines body for SetAppEnv for application/json ContentType.
 type SetAppEnvJSONRequestBody = SetAppEnvJSONBody
 
+// CreateBackupJSONRequestBody defines body for CreateBackup for application/json ContentType.
+type CreateBackupJSONRequestBody = BackupItemRef
+
 // SetGlobalEnvJSONRequestBody defines body for SetGlobalEnv for application/json ContentType.
 type SetGlobalEnvJSONRequestBody = SetGlobalEnvJSONBody
 
@@ -1547,9 +1588,27 @@ type ClientInterface interface {
 	// Corresponds with GET /api/projects/{projectName}/backups (the `GetBackupOverview` operationId).
 	GetBackupOverview(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateBackupWithBody Start a manual backup
+	//
+	// Creates a manual backup run of the whole project, or of one database or volume when kind and name are given.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/projects/{projectName}/backups (the `CreateBackup` operationId).
+	CreateBackupWithBody(ctx context.Context, projectName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateBackup Start a manual backup
+	//
+	// Creates a manual backup run of the whole project, or of one database or volume when kind and name are given.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/projects/{projectName}/backups (the `CreateBackup` operationId).
+	CreateBackup(ctx context.Context, projectName string, body CreateBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListBackups List the backups of one database or volume
 	//
-	// Returns the successful backups of one resource, newest first. Backups older than the daily retention are left out, because restic has already pruned them.
+	// Returns the successful backups of one resource, newest first. Backups that restic has pruned are left out.
 	//
 	// Corresponds with GET /api/projects/{projectName}/backups/list (the `ListBackups` operationId).
 	ListBackups(ctx context.Context, projectName string, params *ListBackupsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2442,9 +2501,47 @@ func (c *Client) GetBackupOverview(ctx context.Context, projectName string, reqE
 	return c.Client.Do(req)
 }
 
+// CreateBackupWithBody Start a manual backup
+//
+// Creates a manual backup run of the whole project, or of one database or volume when kind and name are given.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/projects/{projectName}/backups (the `CreateBackup` operationId).
+func (c *Client) CreateBackupWithBody(ctx context.Context, projectName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBackupRequestWithBody(c.Server, projectName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateBackup Start a manual backup
+//
+// Creates a manual backup run of the whole project, or of one database or volume when kind and name are given.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/projects/{projectName}/backups (the `CreateBackup` operationId).
+func (c *Client) CreateBackup(ctx context.Context, projectName string, body CreateBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBackupRequest(c.Server, projectName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListBackups List the backups of one database or volume
 //
-// Returns the successful backups of one resource, newest first. Backups older than the daily retention are left out, because restic has already pruned them.
+// Returns the successful backups of one resource, newest first. Backups that restic has pruned are left out.
 //
 // Corresponds with GET /api/projects/{projectName}/backups/list (the `ListBackups` operationId).
 func (c *Client) ListBackups(ctx context.Context, projectName string, params *ListBackupsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4574,6 +4671,53 @@ func NewGetBackupOverviewRequest(server string, projectName string) (*http.Reque
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewCreateBackupRequest calls the generic CreateBackup builder with application/json body
+func NewCreateBackupRequest(server string, projectName string, body CreateBackupJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateBackupRequestWithBody(server, projectName, "application/json", bodyReader)
+}
+
+// NewCreateBackupRequestWithBody constructs an http.Request for the CreateBackup method, with any body, and a specified content type
+func NewCreateBackupRequestWithBody(server string, projectName string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectName", projectName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/projects/%s/backups", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -7043,9 +7187,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/projects/{projectName}/backups (the `GetBackupOverview` operationId).
 	GetBackupOverviewWithResponse(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*GetBackupOverviewResponse, error)
 
+	// CreateBackupWithBodyWithResponse Start a manual backup
+	//
+	// Creates a manual backup run of the whole project, or of one database or volume when kind and name are given.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/projects/{projectName}/backups (the `CreateBackup` operationId).
+	CreateBackupWithBodyWithResponse(ctx context.Context, projectName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBackupResponse, error)
+
+	// CreateBackupWithResponse Start a manual backup
+	//
+	// Creates a manual backup run of the whole project, or of one database or volume when kind and name are given.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/projects/{projectName}/backups (the `CreateBackup` operationId).
+	CreateBackupWithResponse(ctx context.Context, projectName string, body CreateBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBackupResponse, error)
+
 	// ListBackupsWithResponse List the backups of one database or volume
 	//
-	// Returns the successful backups of one resource, newest first. Backups older than the daily retention are left out, because restic has already pruned them.
+	// Returns the successful backups of one resource, newest first. Backups that restic has pruned are left out.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -8966,6 +9128,82 @@ func (r GetBackupOverviewResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetBackupOverviewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateBackupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *BackupRun
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GenericMessage
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *GenericMessage
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *GenericMessage
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GenericMessage
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r CreateBackupResponse) GetJSON202() *BackupRun {
+	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateBackupResponse) GetJSON400() *GenericMessage {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateBackupResponse) GetJSON401() *GenericMessage {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateBackupResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateBackupResponse) GetJSON409() *GenericMessage {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateBackupResponse) GetJSON500() *GenericMessage {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateBackupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateBackupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateBackupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateBackupResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12663,9 +12901,39 @@ func (c *ClientWithResponses) GetBackupOverviewWithResponse(ctx context.Context,
 	return ParseGetBackupOverviewResponse(rsp)
 }
 
+// CreateBackupWithBodyWithResponse Start a manual backup
+//
+// Creates a manual backup run of the whole project, or of one database or volume when kind and name are given.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/projects/{projectName}/backups (the `CreateBackup` operationId).
+func (c *ClientWithResponses) CreateBackupWithBodyWithResponse(ctx context.Context, projectName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBackupResponse, error) {
+	rsp, err := c.CreateBackupWithBody(ctx, projectName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBackupResponse(rsp)
+}
+
+// CreateBackupWithResponse Start a manual backup
+//
+// Creates a manual backup run of the whole project, or of one database or volume when kind and name are given.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/projects/{projectName}/backups (the `CreateBackup` operationId).
+func (c *ClientWithResponses) CreateBackupWithResponse(ctx context.Context, projectName string, body CreateBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBackupResponse, error) {
+	rsp, err := c.CreateBackup(ctx, projectName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBackupResponse(rsp)
+}
+
 // ListBackupsWithResponse List the backups of one database or volume
 //
-// Returns the successful backups of one resource, newest first. Backups older than the daily retention are left out, because restic has already pruned them.
+// Returns the successful backups of one resource, newest first. Backups that restic has pruned are left out.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -14623,6 +14891,67 @@ func ParseGetBackupOverviewResponse(rsp *http.Response) (*GetBackupOverviewRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateBackupResponse parses an HTTP response from a CreateBackupWithResponse call
+func ParseCreateBackupResponse(rsp *http.Response) (*CreateBackupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateBackupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest BackupRun
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GenericMessage

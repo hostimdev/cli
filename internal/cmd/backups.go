@@ -39,6 +39,10 @@ var downloadBackoff = []time.Duration{
 // again.
 var errDownloadInterrupted = errors.New("stopped waiting for the download; run the same command again later to resume")
 
+// errBackupWaitInterrupted is returned when the user stops waiting for a backup
+// with Ctrl-C. The run keeps going on the server.
+var errBackupWaitInterrupted = errors.New("stopped waiting; the backup keeps running")
+
 // errExpiredURL marks a 403 from the pre-signed URL, which means it expired and
 // a fresh one is needed.
 type errExpiredURL struct{}
@@ -54,10 +58,11 @@ func (e permanentDownloadError) Unwrap() error { return e.err }
 func newBackupsCmd(c *cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backups",
-		Short: "List a project's backups and download one",
+		Short: "List, create and download a project's backups",
 	}
 	cmd.AddCommand(
 		backupsListCmd(c),
+		backupsCreateCmd(c),
 		backupsDownloadCmd(c),
 	)
 	// Bare `hostim backups` shows the overview.
@@ -106,7 +111,7 @@ func backupsOverview(cmd *cobra.Command, c *cli) error {
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, scheduleLine(ov.Schedule, ov.NextRunTime))
-	if keep := retentionLine(ov.Retention); keep != "" {
+	if keep := retentionLine(ov.Retention, ov.ManualRetention); keep != "" {
 		fmt.Fprintln(out, keep)
 	}
 	if len(rows) > 0 {
@@ -215,6 +220,170 @@ func resolveBackupKind(ctx context.Context, cl *api.ClientWithResponses, project
 // in a period, which Go's error-string convention otherwise avoids. The CLI
 // prints it after "error: ".
 func userErr(format string, args ...any) error { return fmt.Errorf(format, args...) }
+
+func backupsCreateCmd(c *cli) *cobra.Command {
+	var kind string
+	var wait bool
+	cmd := &cobra.Command{
+		Use:   "create [<resource>]",
+		Short: "Start a manual backup of the whole project or one resource",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cl, project, err := c.clientAndProject(cmd.Context())
+			if err != nil {
+				return err
+			}
+			resource := ""
+			if len(args) == 1 {
+				resource = args[0]
+			}
+			run, err := startBackup(cmd.Context(), cl, project, resource, kind)
+			if err != nil {
+				return err
+			}
+			if !wait {
+				if c.jsonOut() {
+					p := c.printer
+					p.Out = cmd.OutOrStdout()
+					return p.JSON(run)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Backup %s started.\n", run.Name)
+				return nil
+			}
+
+			// Ctrl-C stops the wait without killing the process; the run
+			// continues on the server.
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			defer stop()
+
+			final, err := awaitBackup(ctx, cl, project, run.Name, cmd.ErrOrStderr())
+			if errors.Is(err, errBackupWaitInterrupted) {
+				fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if c.jsonOut() {
+				p := c.printer
+				p.Out = cmd.OutOrStdout()
+				return p.JSON(final)
+			}
+			if err := printBackupItems(c, cmd, final); err != nil {
+				return err
+			}
+			if final.Phase != "Succeeded" {
+				return fmt.Errorf("backup %s finished with phase %s", final.Name, final.Phase)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&kind, "kind", "", "resource kind: postgres, mysql or volume (skips the lookup)")
+	cmd.Flags().BoolVar(&wait, "wait", false, "wait for the backup to finish")
+	return cmd
+}
+
+// startBackup starts a manual run of the whole project (no resource) or of one
+// database or volume, and returns the new run.
+func startBackup(ctx context.Context, cl *api.ClientWithResponses, project, resource, kind string) (*api.BackupRun, error) {
+	body := api.CreateBackupJSONRequestBody{}
+	if resource == "" {
+		if kind != "" {
+			return nil, errors.New("--kind needs a resource name")
+		}
+	} else {
+		k, err := resolveBackupKind(ctx, cl, project, resource, kind)
+		if err != nil {
+			return nil, err
+		}
+		body.Kind = api.BackupItemRefKind(k)
+		body.Name = resource
+	}
+	resp, err := cl.CreateBackupWithResponse(ctx, project, body)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON202 == nil {
+		return nil, client.ErrEmptyResponse
+	}
+	return resp.JSON202, nil
+}
+
+// awaitBackup polls the overview until the named run reaches a terminal phase.
+// One progress line goes to stderr, as in awaitDownload.
+func awaitBackup(ctx context.Context, cl *api.ClientWithResponses, project, name string, errW io.Writer) (*api.BackupRun, error) {
+	term := isTerminalWriter(errW)
+	start := time.Now()
+	var last time.Time
+	for {
+		resp, err := cl.GetBackupOverviewWithResponse(ctx, project)
+		if err != nil {
+			return nil, err
+		}
+		if err := checkResp(resp.StatusCode(), resp.Body); err != nil {
+			return nil, err
+		}
+		if resp.JSON200 == nil {
+			return nil, client.ErrEmptyResponse
+		}
+		run := findBackupRun(resp.JSON200.Runs, name)
+		if run == nil {
+			// The run was trimmed from history before we saw it finish.
+			return nil, fmt.Errorf("backup %s is no longer listed", name)
+		}
+		switch run.Phase {
+		case "Succeeded", "PartiallyFailed", "Failed":
+			if term {
+				fmt.Fprintln(errW)
+			}
+			return run, nil
+		}
+
+		elapsed := time.Since(start).Truncate(time.Second)
+		if term {
+			fmt.Fprintf(errW, "\rBacking up %s… (%s)", run.Name, elapsed)
+		} else if last.IsZero() || time.Since(last) >= downloadProgressInterval {
+			fmt.Fprintf(errW, "Backing up %s… (%s)\n", run.Name, elapsed)
+			last = time.Now()
+		}
+
+		select {
+		case <-ctx.Done():
+			if term {
+				fmt.Fprintln(errW)
+			}
+			return nil, errBackupWaitInterrupted
+		case <-time.After(backupPollInterval):
+		}
+	}
+}
+
+// findBackupRun returns the run with the given name, or nil.
+func findBackupRun(runs []api.BackupRun, name string) *api.BackupRun {
+	for i := range runs {
+		if runs[i].Name == name {
+			return &runs[i]
+		}
+	}
+	return nil
+}
+
+// printBackupItems writes one line per item of a finished run.
+func printBackupItems(c *cli, cmd *cobra.Command, run *api.BackupRun) error {
+	rows := make([][]string, 0, len(run.Items))
+	for _, it := range run.Items {
+		rows = append(rows, []string{it.Kind, it.Name, it.Phase, dash(str(it.Id))})
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	p := c.printer
+	p.Out = cmd.OutOrStdout()
+	return p.Table([]string{"KIND", "NAME", "PHASE", "ID"}, rows)
+}
 
 func backupsDownloadCmd(c *cli) *cobra.Command {
 	var file, kind string
@@ -383,7 +552,8 @@ func awaitDownload(ctx context.Context, cl *api.ClientWithResponses, project, ba
 
 // fetchToFile downloads the prepared file to target, resuming an interrupted
 // transfer and retrying network and 5xx failures. A nil refresh means an 403
-// simply fails.
+// simply fails. The transfer goes to target.part and is renamed when complete,
+// so a resume never appends to a finished file of another backup.
 func fetchToFile(ctx context.Context, dl *api.BackupDownload, target string, stdout, errW io.Writer, refresh func() (*api.BackupDownload, error)) (*api.BackupDownload, error) {
 	if target == "-" {
 		if err := streamToStdout(ctx, dl, stdout, errW); err != nil {
@@ -391,19 +561,23 @@ func fetchToFile(ctx context.Context, dl *api.BackupDownload, target string, std
 		}
 		return dl, nil
 	}
+	if backupComplete(dl, target) {
+		return dl, nil
+	}
 
+	part := target + ".part"
 	refreshed := false
 	for attempt := 0; ; attempt++ {
-		if backupComplete(dl, target) {
-			return dl, nil
+		if backupComplete(dl, part) {
+			return dl, os.Rename(part, target)
 		}
 
-		err := fetchOnce(ctx, dl, target, errW)
+		err := fetchOnce(ctx, dl, part, errW)
 		if err == nil {
-			if dl.SizeBytes == nil || fileSize(target) == *dl.SizeBytes {
-				return dl, nil
+			if dl.SizeBytes == nil || fileSize(part) == *dl.SizeBytes {
+				return dl, os.Rename(part, target)
 			}
-			err = fmt.Errorf("download incomplete: got %d of %d bytes", fileSize(target), *dl.SizeBytes)
+			err = fmt.Errorf("download incomplete: got %d of %d bytes", fileSize(part), *dl.SizeBytes)
 		}
 
 		var expired errExpiredURL
@@ -651,8 +825,21 @@ func scheduleLine(schedule string, next *time.Time) string {
 }
 
 // retentionLine renders the restic forget policy in the console's words, or ""
-// when there is none.
-func retentionLine(r api.BackupRetention) string {
+// when there is none. A manual policy is folded into the daily sentence.
+func retentionLine(r api.BackupRetention, manual *api.BackupRetention) string {
+	if r.KeepDaily != nil && manual != nil && manual.KeepLast != nil {
+		days := *r.KeepDaily
+		day := fmt.Sprintf("%d day", days)
+		if days != 1 {
+			day += "s"
+		}
+		last := *manual.KeepLast
+		manuals := fmt.Sprintf("your last %d manual backups", last)
+		if last == 1 {
+			manuals = "your last manual backup"
+		}
+		return fmt.Sprintf("We keep daily backups for %s and %s.", day, manuals)
+	}
 	if r.KeepDaily != nil && r.KeepLast == nil && r.KeepWeekly == nil && r.KeepMonthly == nil {
 		return fmt.Sprintf("We keep %d days.", *r.KeepDaily)
 	}

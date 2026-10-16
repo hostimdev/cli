@@ -18,8 +18,9 @@ import (
 // of the last create-app request so the test can check what was sent.
 type testAPI struct {
 	*httptest.Server
-	lastAppBody map[string]any
-	lastEnvBody string
+	lastAppBody    map[string]any
+	lastEnvBody    string
+	lastBackupBody map[string]any
 }
 
 func (ta *testAPI) register() http.Handler {
@@ -45,8 +46,15 @@ func (ta *testAPI) register() http.Handler {
 		ta.lastEnvBody = string(body)
 		_, _ = io.WriteString(w, `{"message":"ok"}`)
 	})
-	mux.HandleFunc("/api/projects/hpr-1/backups", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/projects/hpr-1/backups", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &ta.lastBackupBody)
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, `{"name":"run-1","trigger":"manual","phase":"Pending","items":[]}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{"enabled":true,"ready":true,"schedule":"0 3 * * *","resources":[{"kind":"postgres","name":"db1"}],"retention":{"keepLast":3},"runs":[]}`)
 	})
 	mux.HandleFunc("/api/projects/hpr-1/backups/list", func(w http.ResponseWriter, _ *http.Request) {
@@ -266,5 +274,41 @@ func TestDownloadBackupReturnsState(t *testing.T) {
 	b, _ := json.Marshal(res.StructuredContent)
 	if !strings.Contains(string(b), "Succeeded") || !strings.Contains(string(b), "backup.tar") {
 		t.Errorf("download payload = %s", b)
+	}
+}
+
+func TestCreateBackupStartsRun(t *testing.T) {
+	session, ta := connect(t, true)
+
+	res, err := session.CallTool(t.Context(), &sdk.CallToolParams{
+		Name:      "create_backup",
+		Arguments: map[string]any{"project": "demo"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("create_backup failed: %v", res.Content)
+	}
+	b, _ := json.Marshal(res.StructuredContent)
+	if !strings.Contains(string(b), "run-1") {
+		t.Errorf("create payload = %s", b)
+	}
+	if len(ta.lastBackupBody) != 0 {
+		t.Errorf("whole-project backup body = %v, want empty", ta.lastBackupBody)
+	}
+
+	res, err = session.CallTool(t.Context(), &sdk.CallToolParams{
+		Name:      "create_backup",
+		Arguments: map[string]any{"project": "demo", "kind": "postgres", "name": "db1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("create_backup resource failed: %v", res.Content)
+	}
+	if ta.lastBackupBody["kind"] != "postgres" || ta.lastBackupBody["name"] != "db1" {
+		t.Errorf("resource backup body = %v", ta.lastBackupBody)
 	}
 }
