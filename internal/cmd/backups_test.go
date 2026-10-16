@@ -108,6 +108,89 @@ func TestResolveBackupKind(t *testing.T) {
 	}
 }
 
+func TestStartBackupWholeProject(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		writeJSON(t, w, http.StatusAccepted, api.BackupRun{Name: "hpr-1-manual-1", Trigger: "manual", Phase: "Pending"})
+	}))
+	defer srv.Close()
+
+	run, err := startBackup(context.Background(), backupClient(t, srv.URL), "hpr-1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Name != "hpr-1-manual-1" {
+		t.Errorf("run name = %q, want hpr-1-manual-1", run.Name)
+	}
+	if body != "{}" {
+		t.Errorf("body = %q, want {}", body)
+	}
+}
+
+func TestStartBackupOneResource(t *testing.T) {
+	var ref api.BackupItemRef
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(b, &ref); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		writeJSON(t, w, http.StatusAccepted, api.BackupRun{Name: "hpr-1-manual-1"})
+	}))
+	defer srv.Close()
+
+	if _, err := startBackup(context.Background(), backupClient(t, srv.URL), "hpr-1", "db1", "postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if ref.Kind != api.BackupItemRefKindPostgres || ref.Name != "db1" {
+		t.Errorf("body = %+v, want postgres db1", ref)
+	}
+}
+
+func TestStartBackupConflictMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusConflict, map[string]string{"message": "a manual backup is already running"})
+	}))
+	defer srv.Close()
+
+	_, err := startBackup(context.Background(), backupClient(t, srv.URL), "hpr-1", "", "")
+	if err == nil || !strings.Contains(err.Error(), "a manual backup is already running") {
+		t.Fatalf("err = %v, want the server message", err)
+	}
+}
+
+func TestAwaitBackupPollsUntilSucceeded(t *testing.T) {
+	downloadFast(t)
+	var polls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		polls++
+		phase := "Running"
+		if polls >= 3 {
+			phase = "Succeeded"
+		}
+		writeJSON(t, w, http.StatusOK, api.BackupOverview{
+			Enabled: true,
+			Ready:   true,
+			Runs: []api.BackupRun{{
+				Name:  "run-1",
+				Phase: phase,
+				Items: []api.BackupItem{{Kind: "postgres", Name: "db1", Phase: phase}},
+			}},
+		})
+	}))
+	defer srv.Close()
+
+	var errW bytes.Buffer
+	run, err := awaitBackup(context.Background(), backupClient(t, srv.URL), "hpr-1", "run-1", &errW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Phase != "Succeeded" || polls != 3 {
+		t.Errorf("phase = %q polls = %d, want Succeeded after 3", run.Phase, polls)
+	}
+}
+
 // backupServer serves the create/poll/download endpoints of one backup.
 type backupServer struct {
 	*httptest.Server
@@ -241,7 +324,7 @@ func TestDownloadResumesWithRange(t *testing.T) {
 	dir := t.TempDir()
 	target := dir + "/backup.tar"
 	half := len(body) / 2
-	if err := writeFile(target, body[:half]); err != nil {
+	if err := writeFile(target+".part", body[:half]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -275,7 +358,7 @@ func TestDownload200RestartsFile(t *testing.T) {
 
 	dir := t.TempDir()
 	target := dir + "/backup.tar"
-	if err := writeFile(target, []byte("stale-partial-content")); err != nil {
+	if err := writeFile(target+".part", []byte("stale-partial-content")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -290,6 +373,38 @@ func TestDownload200RestartsFile(t *testing.T) {
 	got, _ := io.ReadAll(mustOpen(t, target))
 	if !bytes.Equal(got, body) {
 		t.Errorf("file was not restarted over the stale bytes")
+	}
+}
+
+// A smaller finished file of another backup under the same name must be
+// replaced, not resumed into.
+func TestDownloadReplacesOtherBackupFile(t *testing.T) {
+	downloadFast(t)
+	body := bytes.Repeat([]byte("hostim-backup-data"), 100)
+	srv := newBackupServer(t, body)
+
+	dir := t.TempDir()
+	target := dir + "/backup.tar"
+	if err := writeFile(target, []byte("other-backup")); err != nil {
+		t.Fatal(err)
+	}
+
+	size := int64(len(body))
+	url := srv.URL + "/dl/bk-1"
+	dl := &api.BackupDownload{Id: "bk-1", Phase: "Succeeded", FileName: "backup.tar", SizeBytes: &size, Url: &url}
+
+	if _, err := fetchToFile(context.Background(), dl, target, io.Discard, io.Discard, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, rng := srv.counts(); rng != "" {
+		t.Errorf("Range = %q, want none", rng)
+	}
+	got, _ := io.ReadAll(mustOpen(t, target))
+	if !bytes.Equal(got, body) {
+		t.Errorf("file holds %d bytes, want %d", len(got), len(body))
+	}
+	if _, err := os.Stat(target + ".part"); !os.IsNotExist(err) {
+		t.Errorf("part file left behind: %v", err)
 	}
 }
 
@@ -346,15 +461,22 @@ func TestDownloadConflictMessage(t *testing.T) {
 
 func TestRetentionLine(t *testing.T) {
 	n := func(v int) *int { return &v }
-	got := retentionLine(api.BackupRetention{KeepLast: n(3), KeepDaily: n(7), KeepWeekly: n(4), KeepMonthly: n(6)})
+	got := retentionLine(api.BackupRetention{KeepLast: n(3), KeepDaily: n(7), KeepWeekly: n(4), KeepMonthly: n(6)}, nil)
 	if got != "We keep: last 3, daily 7, weekly 4, monthly 6." {
 		t.Errorf("retentionLine = %q", got)
 	}
-	if got := retentionLine(api.BackupRetention{KeepDaily: n(7)}); got != "We keep 7 days." {
+	if got := retentionLine(api.BackupRetention{KeepDaily: n(7)}, nil); got != "We keep 7 days." {
 		t.Errorf("daily retentionLine = %q", got)
 	}
-	if got := retentionLine(api.BackupRetention{}); got != "" {
+	if got := retentionLine(api.BackupRetention{}, nil); got != "" {
 		t.Errorf("empty retentionLine = %q", got)
+	}
+	if got := retentionLine(api.BackupRetention{KeepDaily: n(7)}, &api.BackupRetention{KeepLast: n(3)}); got != "We keep daily backups for 7 days and your last 3 manual backups." {
+		t.Errorf("combined retentionLine = %q", got)
+	}
+	// Without a daily policy the manual count is not used.
+	if got := retentionLine(api.BackupRetention{KeepLast: n(2)}, &api.BackupRetention{KeepLast: n(3)}); got != "We keep: last 2." {
+		t.Errorf("manual-only retentionLine = %q", got)
 	}
 }
 
