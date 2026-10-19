@@ -68,7 +68,7 @@ func newRootCmd(c *cli, manual string) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "hostim",
 		Short: "Manage Hostim projects, apps, databases and volumes",
-		Long: "hostim is the command-line interface to the Hostim cloud platform.\n" +
+		Long: "hostim is the command-line interface to the Hostim.dev cloud platform (https://hostim.dev).\n" +
 			"It talks to the public REST API at https://api.hostim.dev.\n\n" +
 			"Scripting this, or driving it from a coding agent? Run `hostim agent`.\n" +
 			"It prints the complete manual to stdout: install, login, every command\n" +

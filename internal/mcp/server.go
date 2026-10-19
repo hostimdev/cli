@@ -38,7 +38,7 @@ func New(o Options) *Server {
 	s := &Server{api: o.Client, allowWrite: o.AllowWrite}
 	s.srv = sdk.NewServer(&sdk.Implementation{
 		Name:    "hostim",
-		Title:   "Hostim",
+		Title:   "Hostim.dev",
 		Version: o.Version,
 	}, &sdk.ServerOptions{Instructions: instructions(o.AllowWrite)})
 	s.registerReadTools()
@@ -54,7 +54,7 @@ func (s *Server) Run(ctx context.Context, t sdk.Transport) error {
 	return s.srv.Run(ctx, t)
 }
 
-const instructionsBase = `Hostim is a cloud hosting platform for containerised apps on Kubernetes.
+const instructionsBase = `Hostim.dev (https://hostim.dev) is a cloud hosting platform for containerised apps on Kubernetes.
 
 Use list_projects to see the projects this token can access, then list_apps,
 get_app_status, get_app_logs and get_app_events to inspect what is running.

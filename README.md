@@ -1,6 +1,6 @@
 # hostim CLI
 
-Command-line interface for the [Hostim](https://hostim.dev) cloud platform.
+Command-line interface for the [Hostim.dev](https://hostim.dev) cloud platform.
 Create and manage projects, apps, databases (MySQL / Postgres / Redis), volumes
 and domains from a terminal or a CI pipeline, over the public REST API at
 `https://api.hostim.dev`.
