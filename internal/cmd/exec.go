@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,9 +84,7 @@ func newExecCmd(c *cli) *cobra.Command {
 			// as the exec's stdin stream closes.
 			wantStdin := stdin || term.IsTerminal(int(os.Stdin.Fd()))
 			sshArgs := buildSSHArgs(host, p.Id, identity, app, remote, wantStdin)
-			run := exec.CommandContext(cmd.Context(), sshBin, sshArgs...)
-			run.Stdin, run.Stdout, run.Stderr = os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr()
-			if err := run.Run(); err != nil {
+			if err := runSSH(cmd, sshBin, sshArgs); err != nil {
 				var ee *exec.ExitError
 				if errors.As(err, &ee) {
 					// ssh already reported whatever went wrong, and the status is
@@ -100,6 +100,49 @@ func newExecCmd(c *cli) *cobra.Command {
 	cmd.Flags().BoolVar(&stdin, "stdin", false, "pipe local stdin into the command (implied when stdin is a terminal)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "authorize the local SSH key on the project without asking")
 	return cmd
+}
+
+// sshRetryFor bounds how long runSSH retries a refused login.
+var sshRetryFor, sshRetryDelay = 30 * time.Second, 2 * time.Second
+
+// runSSH runs ssh and retries while the bastion refuses the login. sshpiper
+// reports any upstream failure as a publickey denial: right after a deploy the
+// bastion pod may be restarting, and in a new project the pipe or the bastion
+// may not exist yet. The denial comes before ssh reads stdin or runs the
+// command, so a retry repeats nothing.
+func runSSH(cmd *cobra.Command, sshBin string, args []string) error {
+	deadline := time.Now().Add(sshRetryFor)
+	for retried := false; ; retried = true {
+		stderr := &deniedWatcher{w: cmd.ErrOrStderr()}
+		run := exec.CommandContext(cmd.Context(), sshBin, args...)
+		run.Stdin, run.Stdout, run.Stderr = os.Stdin, cmd.OutOrStdout(), stderr
+		err := run.Run()
+		var ee *exec.ExitError
+		if !stderr.denied || !errors.As(err, &ee) || ee.ExitCode() != 255 || time.Now().After(deadline) {
+			return err
+		}
+		if !retried {
+			fmt.Fprintf(cmd.ErrOrStderr(), "The bastion may still be starting; retrying for up to %s...\n", sshRetryFor)
+		}
+		select {
+		case <-cmd.Context().Done():
+			return cmd.Context().Err()
+		case <-time.After(sshRetryDelay):
+		}
+	}
+}
+
+// deniedWatcher passes ssh's stderr through and notes a publickey denial.
+type deniedWatcher struct {
+	w      io.Writer
+	denied bool
+}
+
+func (d *deniedWatcher) Write(b []byte) (int, error) {
+	if bytes.Contains(b, []byte("Permission denied (publickey")) {
+		d.denied = true
+	}
+	return d.w.Write(b)
 }
 
 // buildSSHArgs assembles the ssh invocation. The remote side always runs the

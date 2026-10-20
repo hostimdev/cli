@@ -1,8 +1,14 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
 )
 
 func TestBuildSSHArgs(t *testing.T) {
@@ -87,5 +93,38 @@ func TestKeyAuthorized(t *testing.T) {
 	}
 	if keyAuthorized("garbage", []string{"garbage"}) {
 		t.Error("a line with no key material must not match")
+	}
+}
+
+func TestRunSSHRetriesDenial(t *testing.T) {
+	// A fake ssh that is refused on the first call, the way sshpiper refuses
+	// while the bastion starts, and lets the second one in.
+	dir := t.TempDir()
+	fake := dir + "/ssh"
+	script := "#!/bin/sh\nif [ ! -e " + dir + "/tried ]; then touch " + dir + "/tried; echo 'app@host: Permission denied (publickey).' >&2; exit 255; fi\necho ran\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sshRetryDelay = 10 * time.Millisecond
+
+	var out, errOut bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	if err := runSSH(cmd, fake, nil); err != nil {
+		t.Fatalf("runSSH: %v (stderr %q)", err, errOut.String())
+	}
+	if out.String() != "ran\n" {
+		t.Fatalf("stdout = %q, want the second call's output", out.String())
+	}
+
+	// Any other failure is the remote command's own and is not retried.
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho ran\nexit 255\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := runSSH(cmd, fake, nil); err == nil || out.String() != "ran\n" {
+		t.Fatalf("err = %v, stdout = %q; want one failed run", err, out.String())
 	}
 }
