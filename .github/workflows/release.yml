@@ -121,3 +121,19 @@ jobs:
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish
+
+      # `npx hostim`: a Node shim that downloads this release's binary on first
+      # run. Published with npm trusted publishing (GitHub OIDC), so there is no
+      # npm token in the repo secrets.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish to npm
+        working-directory: npm
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          npm version "${TAG#v}" --no-git-tag-version
+          npm publish --access public

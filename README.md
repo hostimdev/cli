@@ -60,7 +60,21 @@ curl -fsSL https://raw.githubusercontent.com/hostimdev/cli/main/install.sh | PRE
 ```
 
 Some agents and CI policies refuse to pipe a downloaded script into a shell. The
-script is not required — fetch the release binary directly:
+script is not required. Use Homebrew (macOS and Linux):
+
+```sh
+brew install hostimdev/tap/hostim
+```
+
+Or npm (Node 18+). `npx` downloads the release binary for your platform on the
+first run, checks it against the release checksums and caches it:
+
+```sh
+npx -y hostim version
+npm install -g hostim   # or install it once and run `hostim`
+```
+
+Or fetch the release binary directly:
 
 ```sh
 VERSION=$(curl -fsSL https://api.github.com/repos/hostimdev/cli/releases/latest | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)

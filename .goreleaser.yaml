@@ -55,8 +55,29 @@ changelog:
       - "^ci"
       - "merge conflict"
 
-# Homebrew publishing is deferred until the tap repo + token exist. Add a
-# `homebrew_casks:` block (goreleaser v2's current syntax) when ready to ship it.
+# `brew install hostimdev/tap/hostim`. Pushed to the tap over SSH with a deploy
+# key (the HOMEBREW_TAP_KEY secret), so no personal token is involved.
+homebrew_casks:
+  - name: hostim
+    repository:
+      owner: hostimdev
+      name: homebrew-tap
+      git:
+        url: git@github.com:hostimdev/homebrew-tap.git
+        private_key: "{{ .Env.HOMEBREW_TAP_KEY }}"
+    homepage: https://hostim.dev
+    description: CLI for Hostim.dev, EU-hosted Docker app hosting
+    license: MIT
+    commit_author:
+      name: github-actions[bot]
+      email: github-actions[bot]@users.noreply.github.com
+    # The binary is not notarized; without this Gatekeeper refuses to run it.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/hostim"]
+          end
 
 release:
   # Publish immediately so users can always grab the latest binary. The CLI is

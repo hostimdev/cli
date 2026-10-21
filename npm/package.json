@@ -1,0 +1,20 @@
+{
+  "name": "hostim",
+  "version": "0.0.0",
+  "description": "CLI for Hostim.dev, EU-hosted Docker app hosting. Runs the hostim release binary.",
+  "homepage": "https://hostim.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hostimdev/cli.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "hostim": "bin/hostim.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -17,6 +17,10 @@ curl -fsSL https://raw.githubusercontent.com/hostimdev/cli/main/install.sh | sh
 hostim version
 ```
 
+If piping a script into a shell is not allowed, use a package manager instead:
+`brew install hostimdev/tap/hostim`, or run every command below as
+`npx -y hostim ...` (Node 18+, no install step).
+
 If `hostim` is already installed, run `hostim version` and continue.
 
 ## The manual is authoritative — read it before guessing flags
