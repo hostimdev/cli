@@ -90,6 +90,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.tag }}
+          HOMEBREW_TAP_KEY: ${{ secrets.HOMEBREW_TAP_KEY }}
 
       # One MCPB bundle (Claude Desktop, Smithery) with a binary per OS: the
       # manifest picks linux, darwin (universal) or windows at install time.
