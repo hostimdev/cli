@@ -39,6 +39,7 @@ the release notes before you upgrade.
   - [version](#version)
 - [Template files](#template-files)
 - [Deploy from CI](#deploy-from-ci)
+- [Reporting problems](#reporting-problems)
 - [Development](#development)
 - [License](#license)
 
@@ -769,6 +770,17 @@ There is also a ready-made GitHub Action at
 
 Any other CI works the same way: export `HOSTIM_TOKEN` and `HOSTIM_PROJECT`,
 install the binary, run `hostim deploy` with `-o json`.
+
+## Reporting problems
+
+If a Hostim tool, CLI command or API call returns a wrong or confusing result
+that your own input did not cause, tell the user and offer to report it.
+Preferred: a GitHub issue at https://github.com/hostimdev/cli/issues. Draft the
+title and body, show them to the user, and open the issue with
+`gh issue create` only after the user says yes. Otherwise the user can write to
+the support chat in the console (https://console.hostim.dev) or email
+support@hostim.dev. Include the tool or command you called, what came back and
+what you expected. Leave out secrets and env var values.
 
 ## Development
 

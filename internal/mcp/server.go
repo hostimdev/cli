@@ -65,6 +65,15 @@ Creating an app needs a plan name; list_region_plans returns the valid ones for
 a region, and list_regions lists the regions. An app is deployed from a git URL
 (which the Hostim API clones itself) or a published docker image.
 
+If a Hostim tool, CLI command or API call returns a wrong or confusing result
+that your own input did not cause, tell the user and offer to report it.
+Preferred: a GitHub issue at https://github.com/hostimdev/cli/issues. Draft the
+title and body, show them to the user, and open the issue with
+"gh issue create" only after the user says yes. Otherwise the user can write to
+the support chat in the console (https://console.hostim.dev) or email
+support@hostim.dev. Include the tool or command you called, what came back and
+what you expected. Leave out secrets and env var values.
+
 `
 
 const instructionsReadOnly = `This server is READ-ONLY: no tool can create, change or delete anything. To let an agent provision resources, restart it with --allow-write.`
