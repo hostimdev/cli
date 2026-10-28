@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hostimdev/cli/api"
@@ -106,5 +108,71 @@ func TestApplySourceBranchOnly(t *testing.T) {
 	}
 	if _, err := applySource(&dock, &deployFlags{branch: "main"}); err == nil {
 		t.Error("--branch on a docker app: want an error")
+	}
+}
+
+// An upload source switches away from git/docker, keeps its dockerfilepath on
+// a re-deploy, and is cleared when the app switches to another source.
+func TestApplySourceUpload(t *testing.T) {
+	var app api.App
+	if err := json.Unmarshal([]byte(`{"deploymentSource":{"type":"git","git":{"url":"https://example.com/r.git","dockerfilepath":"Dockerfile"}}}`), &app); err != nil {
+		t.Fatal(err)
+	}
+	f := &deployFlags{source: ".", uploadSha: "abc", dockerfile: "docker/Dockerfile"}
+	if changed, err := applySource(&app, f); err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	src, err := loadSource(app.DeploymentSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.Type != string(api.UploadSource) || src.Upload == nil || src.Upload.Sha256 != "abc" {
+		t.Fatalf("upload source = %+v", src)
+	}
+	if src.Git != nil || src.Docker != nil {
+		t.Errorf("other sources should be cleared: %+v", src)
+	}
+	if str(src.Upload.Dockerfilepath) != "docker/Dockerfile" {
+		t.Errorf("dockerfilepath = %q", str(src.Upload.Dockerfilepath))
+	}
+
+	// A re-deploy without --dockerfile keeps the existing path.
+	f = &deployFlags{source: ".", uploadSha: "def"}
+	if _, err := applySource(&app, f); err != nil {
+		t.Fatal(err)
+	}
+	src, _ = loadSource(app.DeploymentSource)
+	if src.Upload.Sha256 != "def" || str(src.Upload.Dockerfilepath) != "docker/Dockerfile" {
+		t.Errorf("re-deploy lost the dockerfilepath: %+v", src.Upload)
+	}
+
+	// Switching to git clears the upload block.
+	if _, err := applySource(&app, &deployFlags{git: "https://example.com/r.git"}); err != nil {
+		t.Fatal(err)
+	}
+	src, _ = loadSource(app.DeploymentSource)
+	if src.Upload != nil || src.Git == nil {
+		t.Errorf("git switch left upload behind: %+v", src)
+	}
+}
+
+func TestPrepareUploadNeedsDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := prepareUpload(context.Background(), nil, "p", &deployFlags{source: dir}, deploymentSource{}, nil); err == nil {
+		t.Fatal("expected an error for a directory without a Dockerfile")
+	} else if !strings.Contains(err.Error(), "Dockerfile") || !strings.Contains(err.Error(), "--dockerfile") {
+		t.Errorf("err = %v, want a Dockerfile hint", err)
+	}
+}
+
+func TestValidateSourceFlags(t *testing.T) {
+	if err := validateSourceFlags(&deployFlags{source: ".", git: "https://x"}); err == nil {
+		t.Error("--source with --git should fail")
+	}
+	if err := validateSourceFlags(&deployFlags{source: ".", dockerImage: "nginx"}); err == nil {
+		t.Error("--source with --docker-image should fail")
+	}
+	if err := validateSourceFlags(&deployFlags{source: "."}); err != nil {
+		t.Errorf("--source alone: %v", err)
 	}
 }

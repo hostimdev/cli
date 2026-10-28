@@ -4,12 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hostimdev/cli/api"
 )
@@ -44,7 +48,7 @@ func TestPromptAppSource(t *testing.T) {
 	// docker path: type, image, decline private creds.
 	app := &api.App{}
 	r := bufio.NewReader(strings.NewReader("docker\nnginx:latest\nn\n"))
-	if err := promptAppSource(io.Discard, r, app); err != nil {
+	if _, err := promptAppSource(io.Discard, r, app); err != nil {
 		t.Fatal(err)
 	}
 	if appSourceIncomplete(app) || app.DeploymentSource.Type != api.Docker || app.DeploymentSource.Docker.Image != "nginx:latest" {
@@ -54,7 +58,7 @@ func TestPromptAppSource(t *testing.T) {
 	// git path: type, url, default branch + dockerfile, decline token.
 	gapp := &api.App{}
 	r = bufio.NewReader(strings.NewReader("git\ngit@github.com:u/r.git\n\n\nn\n"))
-	if err := promptAppSource(io.Discard, r, gapp); err != nil {
+	if _, err := promptAppSource(io.Discard, r, gapp); err != nil {
 		t.Fatal(err)
 	}
 	if appSourceIncomplete(gapp) || gapp.DeploymentSource.Type != api.Git {
@@ -65,10 +69,24 @@ func TestPromptAppSource(t *testing.T) {
 		t.Errorf("git defaults wrong: %+v", g)
 	}
 
+	// upload path: type, default directory and Dockerfile.
+	uapp := &api.App{}
+	r = bufio.NewReader(strings.NewReader("upload\n\n\n"))
+	path, err := promptAppSource(io.Discard, r, uapp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "." || appSourceIncomplete(uapp) || uapp.DeploymentSource.Type != api.UploadSource {
+		t.Fatalf("upload source not filled in: path=%q source=%+v", path, uapp.DeploymentSource)
+	}
+	if uapp.DeploymentSource.Upload == nil || uapp.DeploymentSource.Upload.Dockerfilepath == nil || *uapp.DeploymentSource.Upload.Dockerfilepath != "Dockerfile" {
+		t.Errorf("upload defaults wrong: %+v", uapp.DeploymentSource.Upload)
+	}
+
 	// EOF before required value aborts.
 	bad := &api.App{}
 	r = bufio.NewReader(strings.NewReader("docker\n"))
-	if err := promptAppSource(io.Discard, r, bad); err == nil {
+	if _, err := promptAppSource(io.Discard, r, bad); err == nil {
 		t.Error("expected abort on EOF before required image")
 	}
 }
@@ -342,5 +360,153 @@ func TestSummarize(t *testing.T) {
 	}
 	if summarize(&api.Template{}) != "-" {
 		t.Errorf("empty summarize should be '-'")
+	}
+}
+
+func TestLoadTemplateUploadPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stack.yml")
+	_ = os.WriteFile(path, []byte(`
+name: Demo
+components:
+  apps:
+    - name: web
+      plan: sa-1-1
+      deploymentSource:
+        type: upload
+        upload:
+          path: ./app
+          dockerfilepath: Dockerfile.dev
+`), 0o600)
+
+	list, err := loadTemplates(path)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("loadTemplates = %d, %v", len(list), err)
+	}
+	entry, err := loadTemplateFileEntry(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.uploadPaths["web"] != "./app" {
+		t.Errorf("upload path = %q, want ./app", entry.uploadPaths["web"])
+	}
+	app := entry.Template.Components.Apps[0]
+	if app.DeploymentSource.Type != api.UploadSource || app.DeploymentSource.Upload == nil {
+		t.Fatalf("upload source not decoded: %+v", app.DeploymentSource)
+	}
+	if str(app.DeploymentSource.Upload.Dockerfilepath) != "Dockerfile.dev" {
+		t.Errorf("dockerfilepath = %q", str(app.DeploymentSource.Upload.Dockerfilepath))
+	}
+}
+
+func TestCheckUploadSources(t *testing.T) {
+	uploadApp := func() *api.Template {
+		tmpl := &api.Template{Name: "x"}
+		var app api.App
+		if err := json.Unmarshal([]byte(`{"name":"web","deploymentSource":{"type":"upload","upload":{"dockerfilepath":"Dockerfile"}}}`), &app); err != nil {
+			t.Fatal(err)
+		}
+		tmpl.Components.Apps = []api.App{app}
+		return tmpl
+	}
+
+	if err := checkUploadSources(uploadApp(), nil, "."); err == nil || !strings.Contains(err.Error(), "needs a path") {
+		t.Errorf("missing path err = %v", err)
+	}
+
+	dir := t.TempDir()
+	if err := checkUploadSources(uploadApp(), map[string]string{"web": dir}, "."); err == nil || !strings.Contains(err.Error(), "no Dockerfile") {
+		t.Errorf("missing Dockerfile err = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkUploadSources(uploadApp(), map[string]string{"web": dir}, "."); err != nil {
+		t.Errorf("valid upload source: %v", err)
+	}
+}
+
+func TestApplyTemplateUploadsAndSendsSha(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	templatePath := filepath.Join(dir, "stack.yml")
+	if err := os.WriteFile(templatePath, []byte(`
+name: Demo
+components:
+  apps:
+    - name: web
+      plan: sa-1-1
+      public: true
+      httpPort: 8080
+      deploymentSource:
+        type: upload
+        upload:
+          path: .
+          dockerfilepath: Dockerfile
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var uploadBody api.UploadRequest
+	var appBody map[string]any
+	mux := http.NewServeMux()
+	writeList := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[]`)
+	}
+	mux.HandleFunc("/api/projects/hpr-1/apps", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_ = json.NewDecoder(r.Body).Decode(&appBody)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{}`)
+			return
+		}
+		writeList(w)
+	})
+	for _, path := range []string{"/api/projects/hpr-1/postgres", "/api/projects/hpr-1/mysqls", "/api/projects/hpr-1/redises", "/api/projects/hpr-1/volumes"} {
+		mux.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) { writeList(w) })
+	}
+	mux.HandleFunc("/api/projects/hpr-1/uploads", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&uploadBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"sha256":"`+uploadBody.Sha256+`","exists":true}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cl, err := api.NewClientWithResponses(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := loadTemplateFileEntry(templatePath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = applyTemplate(context.Background(), io.Discard, cl, "hpr-1", &entry.Template,
+		entry.uploadPaths, filepath.Dir(templatePath), false, false, time.Second, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uploadBody.Sha256 == "" {
+		t.Fatal("apply did not upload the source")
+	}
+	src, _ := appBody["deploymentSource"].(map[string]any)
+	if src["type"] != "upload" {
+		t.Errorf("deploymentSource.type = %v, want upload", src["type"])
+	}
+	up, _ := src["upload"].(map[string]any)
+	if up["sha256"] != uploadBody.Sha256 {
+		t.Errorf("upload.sha256 = %v, want %s", up["sha256"], uploadBody.Sha256)
+	}
+	if _, ok := up["path"]; ok {
+		t.Errorf("path must not be sent: %v", up)
+	}
+	raw, _ := json.Marshal(appBody)
+	if strings.Contains(string(raw), `"path"`) {
+		t.Errorf("path leaked into the app request: %s", raw)
 	}
 }

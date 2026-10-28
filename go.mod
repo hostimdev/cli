@@ -3,6 +3,7 @@ module github.com/hostimdev/cli
 go 1.26.1
 
 require (
+	github.com/moby/patternmatcher v0.6.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/oapi-codegen/runtime v1.4.2
 	github.com/spf13/cobra v1.10.2

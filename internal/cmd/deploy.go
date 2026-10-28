@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -15,10 +16,13 @@ import (
 )
 
 type deployFlags struct {
+	source     string
 	git        string
 	branch     string
 	dockerfile string
 	gitToken   string
+	// uploadSha is filled just before applySource when --source is uploaded.
+	uploadSha string
 
 	dockerImage string
 	dockerUser  string
@@ -51,8 +55,9 @@ func newDeployCmd(c *cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deploy <app>",
 		Short: "Create or update an app and wait for the build",
-		Long: "Deploy an app: create it (from --git or --docker-image) if it does not\n" +
-			"exist, otherwise update its source and trigger a rebuild. By default the\n" +
+		Long: "Deploy an app: create it (from --source, --git or --docker-image) if it\n" +
+			"does not exist, otherwise update its source and trigger a rebuild. --source\n" +
+			"uploads a local directory and builds its Dockerfile. By default the\n" +
 			"command waits for the build to finish and exits non-zero if it fails,\n" +
 			"making it safe to use in CI pipelines.\n\n" +
 			"This command deploys one app. An app that also needs a database, a redis\n" +
@@ -70,9 +75,10 @@ func newDeployCmd(c *cli) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
+	fl.StringVar(&f.source, "source", "", "deploy a local directory: it is uploaded and built with its Dockerfile")
 	fl.StringVar(&f.git, "git", "", "git repository URL")
 	fl.StringVar(&f.branch, "branch", "", "git branch")
-	fl.StringVar(&f.dockerfile, "dockerfile", "", "path to the Dockerfile in the repo; its directory is the build context")
+	fl.StringVar(&f.dockerfile, "dockerfile", "", "path to the Dockerfile in the repo or source dir; its directory is the build context")
 	fl.StringVar(&f.gitToken, "git-token", "", "token for private git repos")
 	fl.StringVar(&f.dockerImage, "docker-image", "", "docker image reference, registry host included")
 	fl.StringVar(&f.dockerUser, "docker-user", "", "docker registry username")
@@ -94,6 +100,9 @@ func newDeployCmd(c *cli) *cobra.Command {
 }
 
 func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error {
+	if err := validateSourceFlags(f); err != nil {
+		return err
+	}
 	a, project, err := c.clientAndProject(cmd.Context())
 	if err != nil {
 		return err
@@ -121,6 +130,17 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 		since, err = client.NewBaseline(ctx, a, project, appName)
 		if err != nil {
 			return err
+		}
+		cur, err := loadSource(app.DeploymentSource)
+		if err != nil {
+			return err
+		}
+		if f.source != "" {
+			if f.uploadSha, err = prepareUpload(ctx, a, project, f, cur, func(msg string) {
+				c.progress(cmd, "  %s\n", msg)
+			}); err != nil {
+				return err
+			}
 		}
 		oldImage := dockerImageOf(app)
 		changed, err := applySource(&app, f)
@@ -152,6 +172,9 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 			return err
 		}
 		if err := checkResp(reb.StatusCode(), reb.Body); err != nil {
+			if srcType == string(api.UploadSource) && reb.StatusCode() == http.StatusConflict {
+				return fmt.Errorf("the uploaded source expired after 7 days; run `hostim deploy %s --source <dir>` again", appName)
+			}
 			return err
 		}
 		c.progress(cmd, "Rebuilding %q...\n", appName)
@@ -159,6 +182,16 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 		if getResp.StatusCode() != 404 {
 			// A non-404 error is a real failure (auth, server), not "missing app".
 			if err := checkResp(getResp.StatusCode(), getResp.Body); err != nil {
+				return err
+			}
+		}
+		if err := checkNewAppFlags(appName, f); err != nil {
+			return err
+		}
+		if f.source != "" {
+			if f.uploadSha, err = prepareUpload(ctx, a, project, f, deploymentSource{}, func(msg string) {
+				c.progress(cmd, "  %s\n", msg)
+			}); err != nil {
 				return err
 			}
 		}
@@ -179,14 +212,14 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 	}
 
 	if !f.wait {
-		return c.result(cmd, res("queued", "app", appName, "action", action),
+		return c.result(cmd, res("queued", "app", appName, deployResultKV(f, action)...),
 			"Not waiting for build (--wait=false).")
 	}
 
-	// A git source builds an image before running, so the build outcome is what
-	// we wait on. A docker-image source has no build phase (buildStatus stays
-	// empty), so we wait on runtime readiness instead.
-	expectBuild := srcType == string(api.Git)
+	// A git or upload source builds an image before running, so the build
+	// outcome is what we wait on. A docker-image source has no build phase
+	// (buildStatus stays empty), so we wait on runtime readiness instead.
+	expectBuild := srcType == string(api.Git) || srcType == string(api.UploadSource)
 
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
@@ -220,20 +253,59 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 		}
 		return err
 	}
-	return c.result(cmd, res("ok", "app", appName,
-		"action", action,
+	kv := append(deployResultKV(f, action),
 		"buildStatus", string(final.BuildStatus),
-		"runtimeStatus", string(final.RuntimeStatus)),
+		"runtimeStatus", string(final.RuntimeStatus))
+	return c.result(cmd, res("ok", "app", appName, kv...),
 		"Deploy succeeded (runtime: %s).", dash(string(final.RuntimeStatus)))
+}
+
+// deployResultKV is the result spine shared by the waiting and --wait=false
+// paths, including the archive hash when this run uploaded a source.
+func deployResultKV(f *deployFlags, action string) []any {
+	kv := []any{"action", action}
+	if f.uploadSha != "" {
+		kv = append(kv, "sha256", f.uploadSha)
+	}
+	return kv
+}
+
+// validateSourceFlags rejects flag combinations that would silently pick one
+// source over another.
+func validateSourceFlags(f *deployFlags) error {
+	if f.source != "" && (f.git != "" || f.dockerImage != "") {
+		return fmt.Errorf("--source cannot be combined with --git or --docker-image")
+	}
+	return nil
+}
+
+// prepareUpload packs and uploads the --source directory, checking first that
+// its Dockerfile exists. cur is the app's current source, so a re-deploy keeps
+// its dockerfilepath when --dockerfile is not given.
+func prepareUpload(ctx context.Context, a *api.ClientWithResponses, project string, f *deployFlags, cur deploymentSource, progress func(string)) (string, error) {
+	dockerfile := f.dockerfile
+	if dockerfile == "" && cur.Type == string(api.UploadSource) && cur.Upload != nil {
+		dockerfile = str(cur.Upload.Dockerfilepath)
+	}
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+	if !client.HasDockerfile(f.source, dockerfile) {
+		return "", fmt.Errorf("no Dockerfile at %s in %s\n\n"+
+			"Write a Dockerfile for the app (a multi-stage Dockerfile is fine), or pass\n"+
+			"--dockerfile <path> if it is at a different path inside the directory", dockerfile, f.source)
+	}
+	return client.Upload(ctx, a, project, f.source, progress)
 }
 
 // deploymentSource mirrors the (inline, anonymous) App.DeploymentSource shape so
 // we can construct/patch it with named types and copy it back via a JSON
 // round-trip, avoiding brittle anonymous-struct type matching.
 type deploymentSource struct {
-	Type   string      `json:"type"`
-	Git    *gitSource  `json:"git,omitempty"`
-	Docker *dockSource `json:"docker,omitempty"`
+	Type   string        `json:"type"`
+	Git    *gitSource    `json:"git,omitempty"`
+	Docker *dockSource   `json:"docker,omitempty"`
+	Upload *uploadSource `json:"upload,omitempty"`
 }
 
 // loadSource copies an App's inline DeploymentSource into the named
@@ -259,6 +331,11 @@ type dockSource struct {
 	Image    string  `json:"image"`
 	Username *string `json:"username,omitempty"`
 	Password *string `json:"password,omitempty"`
+}
+
+type uploadSource struct {
+	Sha256         string  `json:"sha256"`
+	Dockerfilepath *string `json:"dockerfilepath,omitempty"`
 }
 
 // deploymentType reads the "type" discriminator ("git" or "docker") out of an
@@ -289,6 +366,7 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 		return false, err
 	}
 
+	prevType := cur.Type
 	changed := false
 	if f.git != "" {
 		cur.Type = string(api.Git)
@@ -297,6 +375,7 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 		}
 		cur.Git.Url = f.git
 		cur.Docker = nil
+		cur.Upload = nil
 		changed = true
 	}
 	if f.dockerImage != "" {
@@ -306,17 +385,50 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 		}
 		cur.Docker.Image = f.dockerImage
 		cur.Git = nil
+		cur.Upload = nil
 		changed = true
+	}
+	if f.source != "" {
+		cur.Type = string(api.UploadSource)
+		if cur.Upload == nil {
+			cur.Upload = &uploadSource{}
+		}
+		cur.Upload.Sha256 = f.uploadSha
+		cur.Git = nil
+		cur.Docker = nil
+		changed = true
+		// A new upload source defaults to Dockerfile; an existing upload app
+		// keeps its dockerfilepath unless --dockerfile overrides it below.
+		if f.dockerfile == "" && (prevType != string(api.UploadSource) || cur.Upload.Dockerfilepath == nil) {
+			df := "Dockerfile"
+			cur.Upload.Dockerfilepath = &df
+		}
 	}
 	// Source options patch the current source on their own, so --branch alone
 	// switches the branch of a git app (HOS-694) instead of being dropped.
-	if f.branch != "" || f.dockerfile != "" || f.gitToken != "" {
+	if f.branch != "" || f.gitToken != "" {
 		if cur.Type != string(api.Git) || cur.Git == nil {
-			return false, fmt.Errorf("--branch, --dockerfile and --git-token need a git source: pass --git <url>")
+			return false, fmt.Errorf("--branch and --git-token need a git source: pass --git <url>")
 		}
 		setOpt(&cur.Git.Branch, f.branch)
-		setOpt(&cur.Git.Dockerfilepath, f.dockerfile)
 		setOpt(&cur.Git.Token, f.gitToken)
+		changed = true
+	}
+	if f.dockerfile != "" {
+		switch cur.Type {
+		case string(api.Git):
+			if cur.Git == nil {
+				cur.Git = &gitSource{}
+			}
+			setOpt(&cur.Git.Dockerfilepath, f.dockerfile)
+		case string(api.UploadSource):
+			if cur.Upload == nil {
+				cur.Upload = &uploadSource{}
+			}
+			setOpt(&cur.Upload.Dockerfilepath, f.dockerfile)
+		default:
+			return false, fmt.Errorf("--dockerfile needs a git or upload source: pass --git <url> or --source <dir>")
+		}
 		changed = true
 	}
 	if f.dockerUser != "" || f.dockerPass != "" {
@@ -361,11 +473,14 @@ func applySource(app *api.App, f *deployFlags) (bool, error) {
 		return false, nil
 	}
 
-	// Copy the patched source back into the generated App.
+	// Copy the patched source back into the generated App. Reset first, since
+	// unmarshalling into an existing struct keeps fields missing from the JSON
+	// and would leave the old source type behind.
 	nb, err := json.Marshal(cur)
 	if err != nil {
 		return false, err
 	}
+	app.DeploymentSource = api.App{}.DeploymentSource
 	if err := json.Unmarshal(nb, &app.DeploymentSource); err != nil {
 		return false, err
 	}
@@ -398,9 +513,9 @@ func buildNewApp(name string, f *deployFlags) (api.App, error) {
 }
 
 // checkNewAppFlags reports everything missing before an app can be created, in
-// one error rather than one per re-run. There is no upload from a local
-// directory: the API builds from a git URL it can reach, or runs a docker image,
-// so an unpushed repository has to become one of those first.
+// one error rather than one per re-run. An app is built from a local directory
+// uploaded with --source, from a git URL the API can reach, or runs a docker
+// image.
 func checkNewAppFlags(name string, f *deployFlags) error {
 	var missing []string
 	var lines []string
@@ -408,12 +523,12 @@ func checkNewAppFlags(name string, f *deployFlags) error {
 		missing = append(missing, "--plan")
 		lines = append(lines, "  --plan <plan>            list plans with `hostim regions pricing <region>`")
 	}
-	if f.git == "" && f.dockerImage == "" {
-		missing = append(missing, "--git|--docker-image")
-		lines = append(lines, "  --git <url> or --docker-image <ref>\n"+
-			"                           the API builds from a git URL it can reach, or runs a\n"+
-			"                           docker image; a local-only directory has to be pushed\n"+
-			"                           or built and published first")
+	if f.source == "" && f.git == "" && f.dockerImage == "" {
+		missing = append(missing, "--source|--git|--docker-image")
+		lines = append(lines, "  --source <dir>, --git <url> or --docker-image <ref>\n"+
+			"                           upload a local directory and build its Dockerfile,\n"+
+			"                           build from a git URL the API can reach, or run a\n"+
+			"                           published docker image")
 	}
 	if f.public && f.port == 0 {
 		missing = append(missing, "--port")

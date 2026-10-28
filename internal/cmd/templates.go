@@ -10,6 +10,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -134,6 +135,13 @@ func describeSource(app *api.App) string {
 	if ds.Type == api.Docker && ds.Docker != nil {
 		return "docker " + ds.Docker.Image
 	}
+	if ds.Type == api.UploadSource && ds.Upload != nil && ds.Upload.Sha256 != "" {
+		sha := ds.Upload.Sha256
+		if len(sha) > 12 {
+			sha = sha[:12]
+		}
+		return "upload " + sha
+	}
 	return string(ds.Type)
 }
 
@@ -232,11 +240,20 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 		return err
 	}
 
-	// Load the template from the chosen source.
+	// Load the template from the chosen source. A local file also carries the
+	// CLI-only upload paths, relative to the file's directory.
 	var tmpl *api.Template
+	uploadPaths := map[string]string{}
+	templateDir := "."
 	switch {
 	case f.file != "":
-		tmpl, err = loadTemplateFile(f.file, f.id)
+		entry, err := loadTemplateFileEntry(f.file, f.id)
+		if err != nil {
+			return err
+		}
+		tmpl = &entry.Template
+		uploadPaths = entry.uploadPaths
+		templateDir = filepath.Dir(f.file)
 	case f.compose != "":
 		tmpl, err = parseCompose(ctx, out, a, f.compose)
 	default:
@@ -268,9 +285,17 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 
 	// Some apps (typically compose services that build from a local Dockerfile)
 	// arrive without a usable deployment source. Mirror the dashboard: guide the
-	// user to supply a docker image or git repo before deploying.
-	if err := completeAppSources(cmd, out, tmpl); err != nil {
+	// user to supply a docker image, git repo or local directory before deploying.
+	if uploadPaths, err = completeAppSources(cmd, out, tmpl, uploadPaths); err != nil {
 		return err
+	}
+
+	// A local file's upload paths are relative to that file, and the directory
+	// must contain the Dockerfile before anything is created.
+	if f.file != "" {
+		if err := checkUploadSources(tmpl, uploadPaths, templateDir); err != nil {
+			return err
+		}
 	}
 
 	// Validate before touching anything (including before creating --new-project),
@@ -302,7 +327,7 @@ func runApply(cmd *cobra.Command, c *cli, f *applyFlags) error {
 		return err
 	}
 
-	if err := applyTemplate(ctx, out, a, project, tmpl, f.skipExisting, f.wait, f.timeout, f.interval); err != nil {
+	if err := applyTemplate(ctx, out, a, project, tmpl, uploadPaths, templateDir, f.skipExisting, f.wait, f.timeout, f.interval); err != nil {
 		return err
 	}
 	return c.result(cmd, res("deployed", "template", tmpl.Name, "project", project,
@@ -374,6 +399,8 @@ func appSourceIncomplete(app *api.App) bool {
 		return ds.Docker == nil || ds.Docker.Image == ""
 	case api.Git:
 		return ds.Git == nil || ds.Git.Url == ""
+	case api.UploadSource:
+		return ds.Upload == nil
 	default:
 		return true
 	}
@@ -390,20 +417,66 @@ func incompleteSourceNames(tmpl *api.Template) []string {
 	return names
 }
 
+// checkUploadSources verifies that every upload app has a path, that the
+// directory exists, and that it contains the Dockerfile it names.
+func checkUploadSources(tmpl *api.Template, uploadPaths map[string]string, baseDir string) error {
+	var problems []string
+	for i := range tmpl.Components.Apps {
+		app := &tmpl.Components.Apps[i]
+		if app.DeploymentSource.Type != api.UploadSource {
+			continue
+		}
+		path := uploadPaths[app.Name]
+		if path == "" {
+			problems = append(problems, fmt.Sprintf("app %s: upload source needs a path", app.Name))
+			continue
+		}
+		dir := resolveUploadDir(baseDir, path)
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			problems = append(problems, fmt.Sprintf("app %s: upload path %q does not exist", app.Name, path))
+			continue
+		}
+		dockerfile := "Dockerfile"
+		if app.DeploymentSource.Upload != nil && str(app.DeploymentSource.Upload.Dockerfilepath) != "" {
+			dockerfile = str(app.DeploymentSource.Upload.Dockerfilepath)
+		}
+		if !client.HasDockerfile(dir, dockerfile) {
+			problems = append(problems, fmt.Sprintf("app %s: no Dockerfile at %q in %s", app.Name, dockerfile, path))
+		}
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "\n"))
+	}
+	return nil
+}
+
+// resolveUploadDir resolves an upload path relative to the template file.
+func resolveUploadDir(baseDir, path string) string {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	return filepath.Join(baseDir, path)
+}
+
 // completeAppSources fills in any app with an incomplete deployment source,
 // mirroring the dashboard's "Needs configuration" step. In an interactive
-// session it prompts for a docker image or git repo; otherwise it fails with a
-// message pointing at --save so the user can edit the template by hand.
-func completeAppSources(cmd *cobra.Command, out io.Writer, tmpl *api.Template) error {
+// session it prompts for a docker image, git repo or local directory; otherwise
+// it fails with a message pointing at --save so the user can edit the template
+// by hand. It returns the upload paths, keyed by app name.
+func completeAppSources(cmd *cobra.Command, out io.Writer, tmpl *api.Template, uploadPaths map[string]string) (map[string]string, error) {
+	if uploadPaths == nil {
+		uploadPaths = map[string]string{}
+	}
 	names := incompleteSourceNames(tmpl)
 	if len(names) == 0 {
-		return nil
+		return uploadPaths, nil
 	}
 	if !isInteractive(cmd) {
-		return fmt.Errorf("these apps have no deployment source: %s\n"+
-			"(the compose services likely build from a local Dockerfile, which the platform can't do)\n"+
-			"save the template with --save <file>, set a docker image or git repo for each app, "+
-			"then deploy with `apply -f <file>`", strings.Join(names, ", "))
+		return nil, fmt.Errorf("these apps have no deployment source: %s\n"+
+			"(a compose service that builds from a local Dockerfile needs an upload source)\n"+
+			"save the template with --save <file>, set a docker image, git repo or upload path\n"+
+			"for each app, then deploy with `apply -f <file>`", strings.Join(names, ", "))
 	}
 	r := bufio.NewReader(cmd.InOrStdin())
 	for i := range tmpl.Components.Apps {
@@ -412,34 +485,40 @@ func completeAppSources(cmd *cobra.Command, out io.Writer, tmpl *api.Template) e
 			continue
 		}
 		fmt.Fprintf(out, "\nApp %q needs a deployment source (its compose service builds from a local Dockerfile).\n", app.Name)
-		if err := promptAppSource(out, r, app); err != nil {
-			return err
+		path, err := promptAppSource(out, r, app)
+		if err != nil {
+			return nil, err
+		}
+		if path != "" {
+			uploadPaths[app.Name] = path
 		}
 	}
-	return nil
+	return uploadPaths, nil
 }
 
-// promptAppSource interactively collects a docker image or git repo for an app
-// and writes it into the app's deployment source.
-func promptAppSource(out io.Writer, r *bufio.Reader, app *api.App) error {
-	typ, err := promptStr(out, r, "Deployment type [docker/git]", "docker")
+// promptAppSource interactively collects a docker image, git repo or local
+// directory for an app and writes it into the app's deployment source. It
+// returns the directory for an upload source, "" otherwise.
+func promptAppSource(out io.Writer, r *bufio.Reader, app *api.App) (string, error) {
+	typ, err := promptStr(out, r, "Deployment type [docker/git/upload]", "docker")
 	if err != nil {
-		return err
+		return "", err
 	}
 	ds := deploymentSource{}
+	uploadPath := ""
 	switch strings.ToLower(strings.TrimSpace(typ)) {
 	case "git":
 		url, err := promptRequired(out, r, "Git repository URL (e.g. git@github.com:user/repo.git)")
 		if err != nil {
-			return err
+			return "", err
 		}
 		branch, err := promptStr(out, r, "Branch", "main")
 		if err != nil {
-			return err
+			return "", err
 		}
 		dockerfile, err := promptStr(out, r, "Dockerfile path", "Dockerfile")
 		if err != nil {
-			return err
+			return "", err
 		}
 		ds.Type = string(api.Git)
 		ds.Git = &gitSource{Url: url}
@@ -447,34 +526,46 @@ func promptAppSource(out io.Writer, r *bufio.Reader, app *api.App) error {
 		setOpt(&ds.Git.Dockerfilepath, dockerfile)
 		private, err := promptYes(out, r, "Private repo? provide an access token")
 		if err != nil {
-			return err
+			return "", err
 		}
 		if private {
 			token, err := promptStr(out, r, "Access token", "")
 			if err != nil {
-				return err
+				return "", err
 			}
 			setOpt(&ds.Git.Token, token)
 		}
+	case "upload":
+		uploadPath, err = promptStr(out, r, "Source directory", ".")
+		if err != nil {
+			return "", err
+		}
+		dockerfile, err := promptStr(out, r, "Dockerfile path", "Dockerfile")
+		if err != nil {
+			return "", err
+		}
+		ds.Type = string(api.UploadSource)
+		ds.Upload = &uploadSource{}
+		setOpt(&ds.Upload.Dockerfilepath, dockerfile)
 	default: // docker
 		image, err := promptRequired(out, r, "Docker image (e.g. nginx:latest or registry.example.com/app:1.0)")
 		if err != nil {
-			return err
+			return "", err
 		}
 		ds.Type = string(api.Docker)
 		ds.Docker = &dockSource{Image: image}
 		private, err := promptYes(out, r, "Private registry? provide credentials")
 		if err != nil {
-			return err
+			return "", err
 		}
 		if private {
 			user, err := promptStr(out, r, "Username", "")
 			if err != nil {
-				return err
+				return "", err
 			}
 			pass, err := promptStr(out, r, "Password", "")
 			if err != nil {
-				return err
+				return "", err
 			}
 			setOpt(&ds.Docker.Username, user)
 			setOpt(&ds.Docker.Password, pass)
@@ -482,9 +573,13 @@ func promptAppSource(out io.Writer, r *bufio.Reader, app *api.App) error {
 	}
 	nb, err := json.Marshal(ds)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return json.Unmarshal(nb, &app.DeploymentSource)
+	app.DeploymentSource = api.App{}.DeploymentSource
+	if err := json.Unmarshal(nb, &app.DeploymentSource); err != nil {
+		return "", err
+	}
+	return uploadPath, nil
 }
 
 // errInputAborted is returned when the user ends input (EOF) at a prompt.
@@ -706,7 +801,7 @@ func resolveApplyProject(ctx context.Context, out io.Writer, c *cli, a *api.Clie
 
 // applyTemplate creates every resource in the template, in dependency order
 // (volumes, postgres, mysql, redis, then apps), waiting for each to be ready.
-func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponses, project string, tmpl *api.Template, skipExisting, wait bool, timeout, interval time.Duration) error {
+func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponses, project string, tmpl *api.Template, uploadPaths map[string]string, templateDir string, skipExisting, wait bool, timeout, interval time.Duration) error {
 	comps := tmpl.Components
 
 	// Pre-flight: never overwrite resources that already exist. Abort before
@@ -858,6 +953,30 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 			fmt.Fprintf(out, "app %q ... exists, skipping\n", app.Name)
 			continue
 		}
+		if app.DeploymentSource.Type == api.UploadSource {
+			path := uploadPaths[app.Name]
+			if path == "" {
+				return fmt.Errorf("app %q: upload source needs a path", app.Name)
+			}
+			dir := resolveUploadDir(templateDir, path)
+			dockerfile := "Dockerfile"
+			if app.DeploymentSource.Upload != nil && str(app.DeploymentSource.Upload.Dockerfilepath) != "" {
+				dockerfile = str(app.DeploymentSource.Upload.Dockerfilepath)
+			}
+			if !client.HasDockerfile(dir, dockerfile) {
+				return fmt.Errorf("app %q: no Dockerfile at %q in %s", app.Name, dockerfile, path)
+			}
+			if app.DeploymentSource.Upload == nil {
+				return fmt.Errorf("app %q: upload source is missing its upload block", app.Name)
+			}
+			sha, err := client.Upload(ctx, a, project, dir, func(msg string) {
+				fmt.Fprintf(out, "app %q: %s\n", app.Name, msg)
+			})
+			if err != nil {
+				return fmt.Errorf("app %q: %w", app.Name, err)
+			}
+			app.DeploymentSource.Upload.Sha256 = sha
+		}
 		for _, d := range app.Domains {
 			pending = append(pending, pendingDomain{app: app.Name, domain: d})
 		}
@@ -880,9 +999,9 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 			fmt.Fprintln(out, "created")
 			continue
 		}
-		// A git app builds before running (wait on the build); a docker app has no
-		// build phase, so wait on runtime readiness instead.
-		expectBuild := app.DeploymentSource.Type == api.Git
+		// A git or upload app builds before running (wait on the build); a docker
+		// app has no build phase, so wait on runtime readiness instead.
+		expectBuild := app.DeploymentSource.Type == api.Git || app.DeploymentSource.Type == api.UploadSource
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		res, perr := client.PollBuild(cctx, a, project, app.Name, interval, expectBuild, nil, nil)
 		cancel()
@@ -964,10 +1083,18 @@ func fetchTemplate(ctx context.Context, a *api.ClientWithResponses, id string) (
 	return nil, fmt.Errorf("template %q not found; available: %s", id, strings.Join(ids, ", "))
 }
 
-// loadTemplates reads a local YAML file holding either one template object or a
-// list of them (the shape of backend/templates.yml). YAML is converted to JSON
-// so the struct's json tags (camelCase) decode correctly.
-func loadTemplates(path string) ([]api.Template, error) {
+// templateEntry is a loaded template plus the CLI-only upload paths, keyed by
+// app name. The API's Upload type has no path field, so the paths are read from
+// the YAML separately.
+type templateEntry struct {
+	Template    api.Template
+	uploadPaths map[string]string
+}
+
+// loadTemplateEntries reads a local YAML file holding either one template
+// object or a list of them (the shape of backend/templates.yml). YAML is
+// converted to JSON so the struct's json tags (camelCase) decode correctly.
+func loadTemplateEntries(path string) ([]templateEntry, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -1000,13 +1127,70 @@ func loadTemplates(path string) ([]api.Template, error) {
 	if len(list) == 0 {
 		return nil, fmt.Errorf("%s contains no templates", path)
 	}
+	paths := uploadPathsByTemplate(doc)
+	entries := make([]templateEntry, len(list))
+	for i := range list {
+		entries[i] = templateEntry{Template: list[i], uploadPaths: paths[i]}
+	}
+	return entries, nil
+}
+
+// loadTemplates returns just the API templates, for callers that do not need
+// the upload paths.
+func loadTemplates(path string) ([]api.Template, error) {
+	entries, err := loadTemplateEntries(path)
+	if err != nil {
+		return nil, err
+	}
+	list := make([]api.Template, len(entries))
+	for i := range entries {
+		list[i] = entries[i].Template
+	}
 	return list, nil
+}
+
+// uploadPathsByTemplate pulls deploymentSource.upload.path out of the raw YAML
+// document, one map per template entry.
+func uploadPathsByTemplate(doc any) []map[string]string {
+	entries, ok := doc.([]any)
+	if !ok {
+		entries = []any{doc}
+	}
+	out := make([]map[string]string, 0, len(entries))
+	for _, entry := range entries {
+		paths := map[string]string{}
+		tmpl, _ := entry.(map[string]any)
+		comps, _ := tmpl["components"].(map[string]any)
+		apps, _ := comps["apps"].([]any)
+		for _, app := range apps {
+			a, _ := app.(map[string]any)
+			name, _ := a["name"].(string)
+			ds, _ := a["deploymentSource"].(map[string]any)
+			if ds["type"] != string(api.UploadSource) {
+				continue
+			}
+			up, _ := ds["upload"].(map[string]any)
+			if p, _ := up["path"].(string); p != "" {
+				paths[name] = p
+			}
+		}
+		out = append(out, paths)
+	}
+	return out
 }
 
 // loadTemplateFile reads one template from a local YAML file. When the file is a
 // list, id picks the entry by id or name; a single-entry list needs no id.
 func loadTemplateFile(path, id string) (*api.Template, error) {
-	list, err := loadTemplates(path)
+	entry, err := loadTemplateFileEntry(path, id)
+	if err != nil {
+		return nil, err
+	}
+	return &entry.Template, nil
+}
+
+func loadTemplateFileEntry(path, id string) (*templateEntry, error) {
+	list, err := loadTemplateEntries(path)
 	if err != nil {
 		return nil, err
 	}
@@ -1015,14 +1199,22 @@ func loadTemplateFile(path, id string) (*api.Template, error) {
 			return &list[0], nil
 		}
 		return nil, fmt.Errorf("%s contains %d templates; pick one with --id <id> (available: %s)",
-			path, len(list), strings.Join(templateIDs(list), ", "))
+			path, len(list), strings.Join(templateIDs(entryTemplates(list)), ", "))
 	}
 	for i := range list {
-		if list[i].Id == id || list[i].Name == id {
+		if list[i].Template.Id == id || list[i].Template.Name == id {
 			return &list[i], nil
 		}
 	}
-	return nil, fmt.Errorf("template %q not found in %s; available: %s", id, path, strings.Join(templateIDs(list), ", "))
+	return nil, fmt.Errorf("template %q not found in %s; available: %s", id, path, strings.Join(templateIDs(entryTemplates(list)), ", "))
+}
+
+func entryTemplates(entries []templateEntry) []api.Template {
+	list := make([]api.Template, len(entries))
+	for i := range entries {
+		list[i] = entries[i].Template
+	}
+	return list
 }
 
 func templateIDs(list []api.Template) []string {
@@ -1052,21 +1244,21 @@ func templatesValidateCmd(c *cli) *cobra.Command {
 			if file == "" {
 				return fmt.Errorf("--file is required: pass the template file to validate")
 			}
-			list, err := loadTemplates(file)
+			list, err := loadTemplateEntries(file)
 			if err != nil {
 				return err
 			}
 			if id != "" {
-				t, err := loadTemplateFile(file, id)
+				entry, err := loadTemplateFileEntry(file, id)
 				if err != nil {
 					return err
 				}
-				list = []api.Template{*t}
+				list = []templateEntry{*entry}
 			}
 			out := cmd.OutOrStdout()
 			bad := 0
 			for i := range list {
-				t := &list[i]
+				t := &list[i].Template
 				name := t.Id
 				if name == "" {
 					name = t.Name
@@ -1076,6 +1268,9 @@ func templatesValidateCmd(c *cli) *cobra.Command {
 					problems = append(problems, err.Error())
 				}
 				if err := validateNames(t); err != nil {
+					problems = append(problems, err.Error())
+				}
+				if err := checkUploadSources(t, list[i].uploadPaths, filepath.Dir(file)); err != nil {
 					problems = append(problems, err.Error())
 				}
 				if len(problems) == 0 {
@@ -1119,7 +1314,7 @@ func saveTemplate(out io.Writer, tmpl *api.Template, path string) error {
 		warns = append(warns, err.Error())
 	}
 	if names := incompleteSourceNames(tmpl); len(names) > 0 {
-		warns = append(warns, fmt.Sprintf("these apps have no deployment source (set a docker image or git repo): %s", strings.Join(names, ", ")))
+		warns = append(warns, fmt.Sprintf("these apps have no deployment source (set a docker image, git repo or upload path): %s", strings.Join(names, ", ")))
 	}
 	for _, w := range warns {
 		fmt.Fprintf(out, "warning: %s\n", w)

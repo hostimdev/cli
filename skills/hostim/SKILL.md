@@ -68,6 +68,14 @@ hostim deploy web \
 after. It waits for the build and exits non-zero if the build fails, so the same
 line works in CI.
 
+From a local directory, uploaded and built from its Dockerfile:
+
+```sh
+hostim deploy web \
+  --source . \
+  --plan sa-1-1 --port 8080
+```
+
 From a Git repository instead of an image — the repository must contain a
 Dockerfile:
 
@@ -84,15 +92,22 @@ Private repositories take `--git-token`; a private registry takes
 `--docker-user` and `--docker-pass`, with the registry host written into the
 image (`--docker-image registry.example.com/me/app:1.2.3`).
 
+`--source` skips `.git/`, `node_modules/`, `.env` and `.env.*` files (except
+`.env.example`, `.env.sample` and `.env.template`), and applies a `.dockerignore`
+at the directory root. The archive limit is 500 MiB after compression. An
+uploaded archive is kept for 7 days; after that, run the deploy with `--source`
+again to re-upload it.
+
 ## Facts agents get wrong
 
 - **`--port` is what makes the app reachable.** It is the port the app listens
   on inside the container. Creating a public app (the default) without one
   fails; a worker with no HTTP takes `--public=false` instead. A wrong port
   means the app never becomes healthy.
-- **Deploying from Git needs a Dockerfile in the repository.** There is no
-  buildpack. If the repo has none, build and push an image yourself and deploy
-  with `--docker-image`.
+- **Deploying from Git or a local directory needs a Dockerfile.** There is no
+  buildpack. If there is none, write one (a multi-stage Dockerfile is fine) or
+  build and push an image yourself and deploy with `--docker-image`. A local
+  directory is uploaded with `--source .`.
 - **The Dockerfile's directory is the build context, not the repo root.** With
   `--dockerfile backend/Dockerfile`, write `COPY package.json .`, not
   `COPY backend/package.json .`; files outside `backend/` are not in the build.
@@ -128,6 +143,21 @@ hostim templates apply --id freshrss --new-project blog --region eu-center --yes
 
 `--compose docker-compose.yml` converts an existing Compose file into a
 template; `--save stack.yml` writes it out to edit first.
+
+An app in a template file can point at a local directory with an upload source.
+`path` is relative to the template file:
+
+```yaml
+      deploymentSource:
+        type: upload
+        upload:
+          path: ./app
+          dockerfilepath: Dockerfile
+```
+
+`hostim templates validate -f stack.yml` checks the path and Dockerfile offline;
+`hostim templates apply -f stack.yml` uploads the directory before creating the
+app.
 
 ## After it is up
 
