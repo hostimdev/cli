@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,6 +23,9 @@ type deployFlags struct {
 	branch     string
 	dockerfile string
 	gitToken   string
+	// static serves --source as a static site with nginx; set by --static
+	// or detected (index.html, no Dockerfile) before the upload.
+	static bool
 	// uploadSha is filled just before applySource when --source is uploaded.
 	uploadSha string
 
@@ -57,7 +62,9 @@ func newDeployCmd(c *cli) *cobra.Command {
 		Short: "Create or update an app and wait for the build",
 		Long: "Deploy an app: create it (from --source, --git or --docker-image) if it\n" +
 			"does not exist, otherwise update its source and trigger a rebuild. --source\n" +
-			"uploads a local directory and builds its Dockerfile. By default the\n" +
+			"uploads a local directory and builds its Dockerfile; a directory with an\n" +
+			"index.html and no Dockerfile (built static-site output such as dist/ or\n" +
+			"public/) is served as a static site with nginx on port 80. By default the\n" +
 			"command waits for the build to finish and exits non-zero if it fails,\n" +
 			"making it safe to use in CI pipelines.\n\n" +
 			"This command deploys one app. An app that also needs a database, a redis\n" +
@@ -76,6 +83,7 @@ func newDeployCmd(c *cli) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&f.source, "source", "", "deploy a local directory: it is uploaded and built with its Dockerfile")
+	fl.BoolVar(&f.static, "static", false, "serve --source as a static site with nginx (automatic when it has an index.html and no Dockerfile)")
 	fl.StringVar(&f.git, "git", "", "git repository URL")
 	fl.StringVar(&f.branch, "branch", "", "git branch")
 	fl.StringVar(&f.dockerfile, "dockerfile", "", "path to the Dockerfile in the repo or source dir; its directory is the build context")
@@ -185,6 +193,9 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 				return err
 			}
 		}
+		if f.source != "" {
+			resolveStatic(f, f.dockerfile)
+		}
 		if err := checkNewAppFlags(appName, f); err != nil {
 			return err
 		}
@@ -256,8 +267,44 @@ func runDeploy(cmd *cobra.Command, c *cli, appName string, f *deployFlags) error
 	kv := append(deployResultKV(f, action),
 		"buildStatus", string(final.BuildStatus),
 		"runtimeStatus", string(final.RuntimeStatus))
-	return c.result(cmd, res("ok", "app", appName, kv...),
-		"Deploy succeeded (runtime: %s).", dash(string(final.RuntimeStatus)))
+	msg := fmt.Sprintf("Deploy succeeded (runtime: %s).", dash(string(final.RuntimeStatus)))
+	if url := appURL(ctx, a, project, appName); url != "" {
+		kv = append(kv, "url", url)
+		msg += "\nURL: " + url
+	}
+	return c.result(cmd, res("ok", "app", appName, kv...), "%s", msg)
+}
+
+// appURL is the app's public address: its first custom domain, else the
+// built-in one. It is empty for a private app or when the lookup fails.
+func appURL(ctx context.Context, a *api.ClientWithResponses, project, appName string) string {
+	resp, err := a.GetAppWithResponse(ctx, project, appName)
+	if err != nil || resp.JSON200 == nil {
+		return ""
+	}
+	app := resp.JSON200
+	if !app.Public {
+		return ""
+	}
+	if len(app.Domains) > 0 && app.Domains[0] != "" {
+		return "https://" + app.Domains[0]
+	}
+	if d := str(app.BuiltInDomain); d != "" {
+		return "https://" + d
+	}
+	return ""
+}
+
+// resolveStatic turns on static mode when the source looks like built site
+// output for the Dockerfile path it would use. Static mode always builds the
+// root Dockerfile it adds to the archive.
+func resolveStatic(f *deployFlags, dockerfile string) {
+	if !f.static {
+		f.static = client.StaticFallback(f.source, dockerfile)
+	}
+	if f.static {
+		f.dockerfile = "Dockerfile"
+	}
 }
 
 // deployResultKV is the result spine shared by the waiting and --wait=false
@@ -276,6 +323,12 @@ func validateSourceFlags(f *deployFlags) error {
 	if f.source != "" && (f.git != "" || f.dockerImage != "") {
 		return fmt.Errorf("--source cannot be combined with --git or --docker-image")
 	}
+	if f.static && f.source == "" {
+		return fmt.Errorf("--static needs --source <dir> with the built site")
+	}
+	if f.static && f.dockerfile != "" {
+		return fmt.Errorf("--static builds its own nginx Dockerfile; drop --dockerfile")
+	}
 	return nil
 }
 
@@ -290,12 +343,15 @@ func prepareUpload(ctx context.Context, a *api.ClientWithResponses, project stri
 	if dockerfile == "" {
 		dockerfile = "Dockerfile"
 	}
-	if !client.HasDockerfile(f.source, dockerfile) {
+	resolveStatic(f, dockerfile)
+	if !f.static && !client.HasDockerfile(f.source, dockerfile) {
 		return "", fmt.Errorf("no Dockerfile at %s in %s\n\n"+
-			"Write a Dockerfile for the app (a multi-stage Dockerfile is fine), or pass\n"+
-			"--dockerfile <path> if it is at a different path inside the directory", dockerfile, f.source)
+			"Write a Dockerfile for the app (a multi-stage Dockerfile is fine), pass\n"+
+			"--dockerfile <path> if it is at a different path inside the directory, or\n"+
+			"point --source at the built output of a static site (the folder with\n"+
+			"index.html, e.g. dist/ or public/)", dockerfile, f.source)
 	}
-	return client.Upload(ctx, a, project, f.source, progress)
+	return client.Upload(ctx, a, project, f.source, f.static, progress)
 }
 
 // deploymentSource mirrors the (inline, anonymous) App.DeploymentSource shape so
@@ -503,6 +559,9 @@ func buildNewApp(name string, f *deployFlags) (api.App, error) {
 	}
 	// volumeMounts is a required array; send [] rather than null on create.
 	app.VolumeMounts = []client.VolumeMount{}
+	if f.port == 0 && f.static {
+		f.port = 80
+	}
 	if f.port > 0 {
 		app.HttpPort = &f.port
 	}
@@ -530,10 +589,13 @@ func checkNewAppFlags(name string, f *deployFlags) error {
 			"                           build from a git URL the API can reach, or run a\n"+
 			"                           published docker image")
 	}
-	if f.public && f.port == 0 {
+	if f.public && f.port == 0 && !f.static {
 		missing = append(missing, "--port")
 		lines = append(lines, "  --port <port>            the port the app listens on; a worker with no HTTP\n"+
 			"                           takes --public=false instead")
+		if _, err := os.Stat(filepath.Join(f.source, "index.html")); f.source != "" && err == nil {
+			lines = append(lines, "  --static                 or, for a built static site, serve it with nginx on port 80")
+		}
 	}
 	if len(missing) == 0 {
 		return nil

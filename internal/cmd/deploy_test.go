@@ -175,4 +175,50 @@ func TestValidateSourceFlags(t *testing.T) {
 	if err := validateSourceFlags(&deployFlags{source: "."}); err != nil {
 		t.Errorf("--source alone: %v", err)
 	}
+	if err := validateSourceFlags(&deployFlags{static: true}); err == nil {
+		t.Error("--static without --source should fail")
+	}
+	if err := validateSourceFlags(&deployFlags{source: ".", static: true, dockerfile: "Dockerfile"}); err == nil {
+		t.Error("--static with --dockerfile should fail")
+	}
+}
+
+// A built site (index.html, no Dockerfile) is created without --port and
+// gets port 80 and the root Dockerfile.
+func TestStaticSiteCreate(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &deployFlags{source: dir, plan: "sa-1-1", public: true}
+	resolveStatic(f, f.dockerfile)
+	if !f.static || f.dockerfile != "Dockerfile" {
+		t.Fatalf("static = %v, dockerfile = %q", f.static, f.dockerfile)
+	}
+	if err := checkNewAppFlags("web", f); err != nil {
+		t.Fatalf("checkNewAppFlags: %v", err)
+	}
+	f.uploadSha = strings.Repeat("a", 64)
+	app, err := buildNewApp("web", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.HttpPort == nil || *app.HttpPort != 80 {
+		t.Errorf("port = %v, want 80", app.HttpPort)
+	}
+}
+
+// A built site that also holds a Dockerfile (Jekyll copies one into _site)
+// is not auto-detected, so the missing --port error points at --static.
+func TestMissingPortHintsStatic(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"index.html", "Dockerfile"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := checkNewAppFlags("web", &deployFlags{source: dir, plan: "sa-1-1", public: true})
+	if err == nil || !strings.Contains(err.Error(), "--static") {
+		t.Errorf("err = %v, want a --static hint", err)
+	}
 }

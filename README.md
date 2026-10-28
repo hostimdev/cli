@@ -247,6 +247,9 @@ hostim deploy web \
 # deploy a local directory: it is uploaded and built with its Dockerfile
 hostim deploy web --source . --plan sa-1-1 --port 8080
 
+# deploy a built static site (index.html, no Dockerfile): nginx on port 80
+npm run build && hostim deploy site --source dist --plan sa-1-1
+
 # redeploy: source is unchanged, just rebuild
 hostim deploy web
 
@@ -269,6 +272,7 @@ Flags:
 
 ```
 --source string              deploy a local directory: it is uploaded and built with its Dockerfile
+--static                     serve --source as a static site with nginx (automatic when it has an index.html and no Dockerfile)
 --git string                 git repository URL
 --branch string              git branch
 --dockerfile string          path to the Dockerfile in the repo or source dir; its directory is the build context
@@ -301,6 +305,16 @@ The archive is limited to 500 MiB after compression. The same files always give
 the same archive hash, so an unchanged directory is not uploaded twice. The
 platform keeps an uploaded archive for 7 days; after that, run the deploy with
 `--source <dir>` again to re-upload it.
+
+A directory with an `index.html` and no `Dockerfile` is a static site: the CLI
+adds an nginx Dockerfile and config, so `--port` is not needed (the app listens
+on 80). `--static` forces this mode when the directory has a Dockerfile (Jekyll
+copies one into `_site`); the directory's own Dockerfile and `.dockerignore`
+are then ignored. In static mode every file in the directory is uploaded, even
+inside a git work tree whose `.gitignore` lists the build folder. The nginx
+config serves `/about` from `about.html` or `about/index.html`, uses the site's
+`404.html`, gzips text, and caches `/_astro/`, `/_next/static/` and `/assets/`
+for a year. On success the deploy prints the app's URL.
 
 Plan IDs are per resource kind and look like `sa-1-1` (shared app, 1 core, 1 GB
 RAM). List the ones a region offers with `hostim regions pricing <region>
