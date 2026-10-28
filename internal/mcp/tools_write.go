@@ -608,8 +608,9 @@ func (s *Server) uploadSource(ctx context.Context, projectID string, src *upload
 	if dockerfile == "" {
 		dockerfile = "Dockerfile"
 	}
-	if !client.HasDockerfile(src.Path, dockerfile) {
-		return "", fmt.Errorf("no Dockerfile at %q in %s; write one or set dockerfilepath", dockerfile, src.Path)
+	static := client.StaticFallback(src.Path, dockerfile)
+	if !static && !client.HasDockerfile(src.Path, dockerfile) {
+		return "", fmt.Errorf("no Dockerfile at %q in %s; write one, set dockerfilepath, or point path at built static output with an index.html", dockerfile, src.Path)
 	}
-	return client.Upload(ctx, s.api, projectID, src.Path, nil)
+	return client.Upload(ctx, s.api, projectID, src.Path, static, nil)
 }

@@ -441,7 +441,7 @@ func checkUploadSources(tmpl *api.Template, uploadPaths map[string]string, baseD
 		if app.DeploymentSource.Upload != nil && str(app.DeploymentSource.Upload.Dockerfilepath) != "" {
 			dockerfile = str(app.DeploymentSource.Upload.Dockerfilepath)
 		}
-		if !client.HasDockerfile(dir, dockerfile) {
+		if !client.StaticFallback(dir, dockerfile) && !client.HasDockerfile(dir, dockerfile) {
 			problems = append(problems, fmt.Sprintf("app %s: no Dockerfile at %q in %s", app.Name, dockerfile, path))
 		}
 	}
@@ -963,13 +963,14 @@ func applyTemplate(ctx context.Context, out io.Writer, a *api.ClientWithResponse
 			if app.DeploymentSource.Upload != nil && str(app.DeploymentSource.Upload.Dockerfilepath) != "" {
 				dockerfile = str(app.DeploymentSource.Upload.Dockerfilepath)
 			}
-			if !client.HasDockerfile(dir, dockerfile) {
+			static := client.StaticFallback(dir, dockerfile)
+			if !static && !client.HasDockerfile(dir, dockerfile) {
 				return fmt.Errorf("app %q: no Dockerfile at %q in %s", app.Name, dockerfile, path)
 			}
 			if app.DeploymentSource.Upload == nil {
 				return fmt.Errorf("app %q: upload source is missing its upload block", app.Name)
 			}
-			sha, err := client.Upload(ctx, a, project, dir, func(msg string) {
+			sha, err := client.Upload(ctx, a, project, dir, static, func(msg string) {
 				fmt.Fprintf(out, "app %q: %s\n", app.Name, msg)
 			})
 			if err != nil {

@@ -109,7 +109,7 @@ func TestPackExclusions(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := writeTree(t, tc.files)
-			path, _, _, err := Pack(dir)
+			path, _, _, err := Pack(dir, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -157,7 +157,7 @@ func TestPackSymlinksAndMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path, _, _, err := Pack(dir)
+	path, _, _, err := Pack(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestPackDeterministic(t *testing.T) {
 		"a.txt":      "a",
 		"sub/b.txt":  "b",
 	})
-	path1, sha1, size1, err := Pack(dir)
+	path1, sha1, size1, err := Pack(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestPackDeterministic(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(dir, "a.txt"), testTime(), testTime()); err != nil {
 		t.Fatal(err)
 	}
-	path2, sha2, size2, err := Pack(dir)
+	path2, sha2, size2, err := Pack(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestPackGitMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path, _, _, err := Pack(dir)
+	path, _, _, err := Pack(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestUploadPutsArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sha, err := Upload(context.Background(), c, "proj", dir, nil)
+	sha, err := Upload(context.Background(), c, "proj", dir, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestUploadSkipsPutWhenExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sha, err := Upload(context.Background(), c, "proj", dir, nil)
+	sha, err := Upload(context.Background(), c, "proj", dir, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +365,7 @@ func TestUploadPutErrorIncludesBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Upload(context.Background(), c, "proj", dir, nil); err == nil || !strings.Contains(err.Error(), "signature expired") {
+	if _, err := Upload(context.Background(), c, "proj", dir, false, nil); err == nil || !strings.Contains(err.Error(), "signature expired") {
 		t.Errorf("err = %v, want the response body", err)
 	}
 }
@@ -383,7 +383,79 @@ func TestPackSizeCap(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "big.bin"), big, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := Pack(dir); err == nil || !strings.Contains(err.Error(), "upload limit") || !strings.Contains(err.Error(), "big.bin") {
+	if _, _, _, err := Pack(dir, false); err == nil || !strings.Contains(err.Error(), "upload limit") || !strings.Contains(err.Error(), "big.bin") {
 		t.Errorf("err = %v, want the size limit and the biggest file", err)
+	}
+}
+
+func TestStaticFallback(t *testing.T) {
+	site := writeTree(t, map[string]string{"index.html": "<h1>hi</h1>"})
+	withDockerfile := writeTree(t, map[string]string{"index.html": "x", "Dockerfile": "FROM scratch\n"})
+	noIndex := writeTree(t, map[string]string{"main.go": "package main"})
+	tests := []struct {
+		name, dir, dockerfile string
+		want                  bool
+	}{
+		{"built site", site, "", true},
+		{"built site, default path", site, "Dockerfile", true},
+		{"custom dockerfile path", site, "docker/Dockerfile", false},
+		{"has a Dockerfile", withDockerfile, "", false},
+		{"no index.html", noIndex, "", false},
+	}
+	for _, tc := range tests {
+		if got := StaticFallback(tc.dir, tc.dockerfile); got != tc.want {
+			t.Errorf("%s: StaticFallback = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A build folder inside a git repo is gitignored; static packing must still
+// take every file, and replace the user's Dockerfile and .dockerignore.
+func TestPackStatic(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("dist/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dist := filepath.Join(repo, "dist")
+	for name, body := range map[string]string{
+		"index.html":       "<h1>hi</h1>",
+		"about/index.html": "about",
+		"Dockerfile":       "FROM scratch\n",
+		".dockerignore":    "*\n",
+	} {
+		p := filepath.Join(dist, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	path, _, _, err := Pack(dist, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(path)
+	got := readArchive(t, path)
+	for _, name := range []string{"index.html", "about/index.html"} {
+		if _, ok := got[name]; !ok {
+			t.Errorf("%s missing from static archive", name)
+		}
+	}
+	if got["Dockerfile"].body != string(staticDockerfile) {
+		t.Errorf("Dockerfile = %q, want the nginx one", got["Dockerfile"].body)
+	}
+	if got[".hostim/nginx.conf"].body != string(staticNginxConf) {
+		t.Error(".hostim/nginx.conf missing or wrong")
+	}
+	if _, ok := got[".dockerignore"]; ok {
+		t.Error(".dockerignore should be dropped in static mode")
 	}
 }

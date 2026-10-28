@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -36,12 +37,23 @@ type sourceEntry struct {
 	rel  string
 	size int64
 	link string
+	// data, when set, is written instead of reading rel from disk.
+	data []byte
 }
+
+//go:embed static/Dockerfile
+var staticDockerfile []byte
+
+//go:embed static/nginx.conf
+var staticNginxConf []byte
 
 // Pack writes a deterministic .tar.gz of dir to a temporary file and returns
 // its path, hex SHA-256 and size. The same tree always gives the same hash, so
-// a re-deploy is recognised as an existing upload.
-func Pack(dir string) (path, sha256Hex string, size int64, err error) {
+// a re-deploy is recognised as an existing upload. With static, dir is taken
+// as built site output: every file is packed (a build folder is usually
+// gitignored, and nothing in it reads .dockerignore), any root Dockerfile is
+// replaced by an nginx one and the nginx config is added under .hostim/.
+func Pack(dir string, static bool) (path, sha256Hex string, size int64, err error) {
 	if dir == "" {
 		dir = "."
 	}
@@ -50,9 +62,12 @@ func Pack(dir string) (path, sha256Hex string, size int64, err error) {
 		return "", "", 0, err
 	}
 
-	entries, err := collectFiles(dir)
+	entries, err := collectFiles(dir, !static)
 	if err != nil {
 		return "", "", 0, err
+	}
+	if static {
+		entries = withStaticFiles(entries)
 	}
 
 	tmp, err := os.CreateTemp("", "hostim-source-*.tar.gz")
@@ -102,12 +117,17 @@ func Pack(dir string) (path, sha256Hex string, size int64, err error) {
 }
 
 // Upload packs dir and stores it through the API, returning the archive's
-// sha256. progress, when set, is called with short status lines.
-func Upload(ctx context.Context, c *api.ClientWithResponses, project, dir string, progress func(string)) (string, error) {
+// sha256. static packs dir as a static site (see Pack). progress, when set,
+// is called with short status lines.
+func Upload(ctx context.Context, c *api.ClientWithResponses, project, dir string, static bool, progress func(string)) (string, error) {
 	if progress != nil {
-		progress("Packing source...")
+		if static {
+			progress("Packing source as a static site (nginx)...")
+		} else {
+			progress("Packing source...")
+		}
 	}
-	path, sha, size, err := Pack(dir)
+	path, sha, size, err := Pack(dir, static)
 	if err != nil {
 		return "", err
 	}
@@ -169,10 +189,50 @@ func HasDockerfile(dir, dockerfile string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func collectFiles(dir string) ([]sourceEntry, error) {
+// IsStaticSite reports whether dir looks like built static-site output: an
+// index.html at its root and no Dockerfile.
+func IsStaticSite(dir string) bool {
+	if HasDockerfile(dir, "") {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(dir, "index.html"))
+	return err == nil && !info.IsDir()
+}
+
+// StaticFallback reports whether a source that names dockerfile should be
+// served as a static site instead: only for the default Dockerfile path,
+// when dir has none but has an index.html.
+func StaticFallback(dir, dockerfile string) bool {
+	return (dockerfile == "" || dockerfile == "Dockerfile") && IsStaticSite(dir)
+}
+
+// withStaticFiles drops the root Dockerfile and .dockerignore and adds the
+// nginx Dockerfile and config.
+func withStaticFiles(entries []sourceEntry) []sourceEntry {
+	kept := entries[:0]
+	for _, e := range entries {
+		if e.rel != "Dockerfile" && e.rel != ".dockerignore" && !strings.HasPrefix(e.rel, ".hostim/") {
+			kept = append(kept, e)
+		}
+	}
+	kept = append(kept,
+		sourceEntry{rel: "Dockerfile", size: int64(len(staticDockerfile)), data: staticDockerfile},
+		sourceEntry{rel: ".hostim/nginx.conf", size: int64(len(staticNginxConf)), data: staticNginxConf})
+	sort.Slice(kept, func(i, j int) bool { return kept[i].rel < kept[j].rel })
+	return kept
+}
+
+// collectFiles lists the files to pack. With ignores, a git work tree is
+// listed through git so .gitignore applies, and .dockerignore is applied.
+func collectFiles(dir string, ignores bool) ([]sourceEntry, error) {
 	var entries []sourceEntry
 
-	if paths, ok := gitFiles(dir); ok {
+	var paths []string
+	ok := false
+	if ignores {
+		paths, ok = gitFiles(dir)
+	}
+	if ok {
 		for _, rel := range paths {
 			full := filepath.Join(dir, filepath.FromSlash(rel))
 			info, err := os.Lstat(full)
@@ -215,9 +275,12 @@ func collectFiles(dir string) ([]sourceEntry, error) {
 		}
 	}
 
-	pm, err := dockerignoreMatcher(dir)
-	if err != nil {
-		return nil, err
+	var pm *patternmatcher.PatternMatcher
+	if ignores {
+		var err error
+		if pm, err = dockerignoreMatcher(dir); err != nil {
+			return nil, err
+		}
 	}
 	if pm != nil {
 		kept := entries[:0]
@@ -359,6 +422,15 @@ func writeEntry(tw *tar.Writer, root string, e sourceEntry) error {
 		ModTime: time.Unix(0, 0).UTC(),
 		Uid:     0,
 		Gid:     0,
+	}
+	if e.data != nil {
+		h.Typeflag = tar.TypeReg
+		h.Size = int64(len(e.data))
+		if err := tw.WriteHeader(h); err != nil {
+			return err
+		}
+		_, err := tw.Write(e.data)
+		return err
 	}
 	full := filepath.Join(root, filepath.FromSlash(e.rel))
 	if e.link != "" {
