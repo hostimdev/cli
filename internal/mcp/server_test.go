@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,6 +23,8 @@ type testAPI struct {
 	lastAppBody    map[string]any
 	lastEnvBody    string
 	lastBackupBody map[string]any
+	lastUploadBody api.UploadRequest
+	lastRebuild    bool
 }
 
 func (ta *testAPI) register() http.Handler {
@@ -35,6 +39,26 @@ func (ta *testAPI) register() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_, _ = io.WriteString(w, `{}`)
+	})
+	mux.HandleFunc("/api/projects/hpr-1/apps/web", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"name":"web","plan":"sa-1-1","domains":[],"volumeMounts":[],"deploymentSource":{"type":"upload","upload":{"sha256":"old","dockerfilepath":"Dockerfile"}}}`)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &ta.lastAppBody)
+		_, _ = io.WriteString(w, `{}`)
+	})
+	mux.HandleFunc("/api/projects/hpr-1/apps/web/rebuild", func(w http.ResponseWriter, _ *http.Request) {
+		ta.lastRebuild = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	})
+	mux.HandleFunc("/api/projects/hpr-1/uploads", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&ta.lastUploadBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"sha256":"`+ta.lastUploadBody.Sha256+`","exists":true}`)
 	})
 	mux.HandleFunc("/api/projects/hpr-1/apps/web/env", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -199,6 +223,78 @@ func TestCreateAppBuildsSourceAndValidates(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Error("create_app with an unknown source type should return a tool error")
+	}
+}
+
+func TestCreateAppUploadsLocalDirectory(t *testing.T) {
+	session, ta := connect(t, true)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := session.CallTool(t.Context(), &sdk.CallToolParams{
+		Name: "create_app",
+		Arguments: map[string]any{
+			"project": "demo",
+			"name":    "web",
+			"plan":    "sa-1-1",
+			"source": map[string]any{
+				"type":   "upload",
+				"upload": map[string]any{"path": dir, "dockerfilepath": "Dockerfile"},
+			},
+			"http_port": 3000,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("create_app upload failed: %v", res.Content)
+	}
+	if ta.lastUploadBody.Sha256 == "" {
+		t.Fatal("create_app did not upload the directory")
+	}
+	src, _ := ta.lastAppBody["deploymentSource"].(map[string]any)
+	up, _ := src["upload"].(map[string]any)
+	if src["type"] != "upload" || up["sha256"] != ta.lastUploadBody.Sha256 {
+		t.Errorf("deploymentSource = %v", src)
+	}
+	if _, ok := up["path"]; ok {
+		t.Errorf("path must not be sent: %v", up)
+	}
+}
+
+func TestDeployAppSourceUploadsAndRebuilds(t *testing.T) {
+	session, ta := connect(t, true)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := session.CallTool(t.Context(), &sdk.CallToolParams{
+		Name:      "deploy_app_source",
+		Arguments: map[string]any{"project": "demo", "app": "web", "path": dir},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("deploy_app_source failed: %v", res.Content)
+	}
+	if ta.lastUploadBody.Sha256 == "" {
+		t.Fatal("deploy_app_source did not upload the directory")
+	}
+	src, _ := ta.lastAppBody["deploymentSource"].(map[string]any)
+	up, _ := src["upload"].(map[string]any)
+	if up["sha256"] != ta.lastUploadBody.Sha256 {
+		t.Errorf("upload.sha256 = %v, want %s", up["sha256"], ta.lastUploadBody.Sha256)
+	}
+	if _, ok := up["path"]; ok {
+		t.Errorf("path must not be sent: %v", up)
+	}
+	if !ta.lastRebuild {
+		t.Error("deploy_app_source did not rebuild the app")
 	}
 }
 

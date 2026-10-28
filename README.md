@@ -231,10 +231,10 @@ Redeploy with `hostim templates apply -f prod.yml --new-project prod-clone`.
 
 ### deploy
 
-`hostim deploy <app>` creates the app when it does not exist (from `--git` or
-`--docker-image`) and otherwise updates its source and triggers a rebuild. It
-waits for the build and exits non-zero if the build fails, so it drops straight
-into a pipeline. `hostim apps deploy` is the same command.
+`hostim deploy <app>` creates the app when it does not exist (from `--source`,
+`--git` or `--docker-image`) and otherwise updates its source and triggers a
+rebuild. It waits for the build and exits non-zero if the build fails, so it
+drops straight into a pipeline. `hostim apps deploy` is the same command.
 
 ```sh
 # first deploy from a git repo
@@ -243,6 +243,9 @@ hostim deploy web \
   --plan sa-1-1 --port 8080 \
   --health-check-path /healthz \
   --env LOG_LEVEL=debug --env-file .env
+
+# deploy a local directory: it is uploaded and built with its Dockerfile
+hostim deploy web --source . --plan sa-1-1 --port 8080
 
 # redeploy: source is unchanged, just rebuild
 hostim deploy web
@@ -265,9 +268,10 @@ hostim deploy web --docker-image nginx --plan sa-1-1 --port 80 \
 Flags:
 
 ```
+--source string              deploy a local directory: it is uploaded and built with its Dockerfile
 --git string                 git repository URL
 --branch string              git branch
---dockerfile string          path to the Dockerfile in the repo; its directory is the build context
+--dockerfile string          path to the Dockerfile in the repo or source dir; its directory is the build context
 --git-token string           token for private git repos
 --docker-image string        docker image reference, registry host included
 --docker-user string         docker registry username
@@ -286,6 +290,17 @@ Flags:
 --timeout duration           max time to wait for the build (default 15m0s)
 --poll-interval duration     status poll interval (default 3s)
 ```
+
+With `--source .` the directory is packed into a `.tar.gz` and uploaded before
+the build. These paths are always left out: `.git/`, `node_modules/` (at any
+depth), `.env` and `.env.*` files (except `.env.example`, `.env.sample` and
+`.env.template`). A `.dockerignore` at the directory root is applied too; the
+Dockerfile and `.dockerignore` are always kept. Symlinked directories are not
+followed, and a symlink is skipped when its target is outside the directory.
+The archive is limited to 500 MiB after compression. The same files always give
+the same archive hash, so an unchanged directory is not uploaded twice. The
+platform keeps an uploaded archive for 7 days; after that, run the deploy with
+`--source <dir>` again to re-upload it.
 
 Plan IDs are per resource kind and look like `sa-1-1` (shared app, 1 core, 1 GB
 RAM). List the ones a region offers with `hostim regions pricing <region>
@@ -616,7 +631,9 @@ Read-only tools are always available: `list_projects`, `list_apps`, `get_app`,
 `get_database_credentials`, `list_volumes`, `list_backups`, `list_regions`,
 `list_templates` and `list_region_plans`. Tools that create, change or delete
 anything — projects, apps, databases, volumes, env vars, domains, backups and
-backup downloads — are only registered with `--allow-write`.
+backup downloads — are only registered with `--allow-write`. `create_app` can
+also upload a local directory with `source.type: upload`, and
+`deploy_app_source` re-uploads one for an existing upload app.
 
 Point an MCP client at it. For Claude Desktop, in
 `claude_desktop_config.json`:
@@ -698,8 +715,19 @@ A git-based app uses this source instead:
           dockerfilepath: Dockerfile
 ```
 
-`hostim templates validate -f <file>` checks names, plans and deployment
-sources offline, before any resource is created.
+An upload-based app points at a local directory, relative to the template file:
+
+```yaml
+      deploymentSource:
+        type: upload
+        upload:
+          path: ./app
+          dockerfilepath: Dockerfile
+```
+
+`path` is a CLI-only field: `apply` uploads that directory and sends only the
+archive hash to the API. `hostim templates validate -f <file>` checks names,
+plans, upload paths and Dockerfiles offline, before any resource is created.
 
 ### Placeholders in envVars
 

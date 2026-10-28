@@ -63,7 +63,8 @@ its hpr-... ID; list_projects returns both.
 
 Creating an app needs a plan name; list_region_plans returns the valid ones for
 a region, and list_regions lists the regions. An app is deployed from a git URL
-(which the Hostim API clones itself) or a published docker image.
+(which the Hostim API clones itself), a published docker image, or a local
+directory uploaded from this machine.
 
 If a Hostim tool, CLI command or API call returns a wrong or confusing result
 that your own input did not cause, tell the user and offer to report it.

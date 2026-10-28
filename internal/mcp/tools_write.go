@@ -36,10 +36,16 @@ type dockerSource struct {
 	Password string `json:"password,omitempty" jsonschema:"registry password"`
 }
 
+type uploadSource struct {
+	Path           string `json:"path" jsonschema:"local directory to upload, absolute or relative to the MCP server's working directory"`
+	DockerfilePath string `json:"dockerfilepath,omitempty" jsonschema:"path to the Dockerfile inside the directory; its directory is the build context; defaults to Dockerfile"`
+}
+
 type appSource struct {
-	Type   string        `json:"type" jsonschema:"git or docker"`
+	Type   string        `json:"type" jsonschema:"git, docker or upload"`
 	Git    *gitSource    `json:"git,omitempty"`
 	Docker *dockerSource `json:"docker,omitempty"`
+	Upload *uploadSource `json:"upload,omitempty"`
 }
 
 type createAppArgs struct {
@@ -69,6 +75,13 @@ type updateAppArgs struct {
 type appActionArgs struct {
 	Project string `json:"project" jsonschema:"project name or hpr-... ID; list them with list_projects"`
 	App     string `json:"app" jsonschema:"app name; list them with list_apps"`
+}
+
+type deployAppSourceArgs struct {
+	Project        string `json:"project" jsonschema:"project name or hpr-... ID; list them with list_projects"`
+	App            string `json:"app" jsonschema:"app name; list them with list_apps"`
+	Path           string `json:"path" jsonschema:"local directory to upload, absolute or relative to the MCP server's working directory"`
+	DockerfilePath string `json:"dockerfilepath,omitempty" jsonschema:"path to the Dockerfile inside the directory; defaults to the app's existing path or Dockerfile"`
 }
 
 type setAppEnvArgs struct {
@@ -153,7 +166,7 @@ func (s *Server) registerWriteTools() {
 		})
 
 	addWrite(s.srv, "create_app", "Create app",
-		"Create an app in a project and start its first build. The app is built from a git repository the Hostim API clones, or from a published docker image. Poll get_app_status until the build finishes.",
+		"Create an app in a project and start its first build. The app is built from a git repository the Hostim API clones, a published docker image, or a local directory uploaded from this machine. Poll get_app_status until the build finishes.",
 		false, func(ctx context.Context, in createAppArgs) (any, error) {
 			id, err := s.projectID(ctx, in.Project)
 			if err != nil {
@@ -162,6 +175,13 @@ func (s *Server) registerWriteTools() {
 			app, err := buildApp(in)
 			if err != nil {
 				return nil, err
+			}
+			if in.Source.Type == string(api.UploadSource) {
+				sha, err := s.uploadSource(ctx, id, in.Source.Upload)
+				if err != nil {
+					return nil, err
+				}
+				app.DeploymentSource.Upload.Sha256 = sha
 			}
 			resp, err := s.api.CreateAppWithResponse(ctx, id, app)
 			if err != nil {
@@ -254,6 +274,58 @@ func (s *Server) registerWriteTools() {
 				return nil, err
 			}
 			return ack("rebuilding", "app", in.App, resp.StatusCode(), resp.Body)
+		})
+
+	addWrite(s.srv, "deploy_app_source", "Deploy app source",
+		"Upload a local directory for an existing app that was created from an upload source, replace its archive, and trigger a rebuild. Uploads expire after 7 days; call this again with the directory to refresh them. Poll get_app_status until the build finishes.",
+		false, func(ctx context.Context, in deployAppSourceArgs) (any, error) {
+			id, err := s.projectID(ctx, in.Project)
+			if err != nil {
+				return nil, err
+			}
+			cur, err := s.api.GetAppWithResponse(ctx, id, in.App)
+			if err != nil {
+				return nil, err
+			}
+			if err := client.Check(cur.StatusCode(), cur.Body); err != nil {
+				return nil, err
+			}
+			app := cur.JSON200
+			if app == nil {
+				return nil, client.ErrEmptyResponse
+			}
+			if app.DeploymentSource.Type != api.UploadSource || app.DeploymentSource.Upload == nil {
+				return nil, fmt.Errorf("app %q is not an upload app", in.App)
+			}
+			src := &uploadSource{Path: in.Path, DockerfilePath: in.DockerfilePath}
+			if src.DockerfilePath == "" && app.DeploymentSource.Upload.Dockerfilepath != nil {
+				src.DockerfilePath = *app.DeploymentSource.Upload.Dockerfilepath
+			}
+			sha, err := s.uploadSource(ctx, id, src)
+			if err != nil {
+				return nil, err
+			}
+			app.DeploymentSource.Upload.Sha256 = sha
+			if in.DockerfilePath != "" {
+				df := in.DockerfilePath
+				app.DeploymentSource.Upload.Dockerfilepath = &df
+			}
+			client.NormalizeApp(app)
+			upd, err := s.api.UpdateAppWithResponse(ctx, id, in.App, *app)
+			if err != nil {
+				return nil, err
+			}
+			if err := client.Check(upd.StatusCode(), upd.Body); err != nil {
+				return nil, err
+			}
+			reb, err := s.api.RebuildAppWithResponse(ctx, id, in.App)
+			if err != nil {
+				return nil, err
+			}
+			if err := client.Check(reb.StatusCode(), reb.Body); err != nil {
+				return nil, err
+			}
+			return map[string]any{"status": "rebuilding", "kind": "app", "name": in.App, "sha256": sha}, nil
 		})
 
 	addWrite(s.srv, "set_app_env", "Set app environment variables",
@@ -479,8 +551,12 @@ func buildApp(in createAppArgs) (api.App, error) {
 		if in.Source.Docker == nil || in.Source.Docker.Image == "" {
 			return api.App{}, fmt.Errorf(`source.type is "docker", so source.docker.image is required`)
 		}
+	case string(api.UploadSource):
+		if in.Source.Upload == nil || in.Source.Upload.Path == "" {
+			return api.App{}, fmt.Errorf(`source.type is "upload", so source.upload.path is required`)
+		}
 	default:
-		return api.App{}, fmt.Errorf(`source.type must be "git" or "docker", got %q`, in.Source.Type)
+		return api.App{}, fmt.Errorf(`source.type must be "git", "docker" or "upload", got %q`, in.Source.Type)
 	}
 
 	replicas := in.Replicas
@@ -516,8 +592,24 @@ func buildApp(in createAppArgs) (api.App, error) {
 	if err != nil {
 		return api.App{}, err
 	}
+	app.DeploymentSource = api.App{}.DeploymentSource
 	if err := json.Unmarshal(b, &app.DeploymentSource); err != nil {
 		return api.App{}, err
 	}
 	return app, nil
+}
+
+// uploadSource packs and uploads a local directory for an app source.
+func (s *Server) uploadSource(ctx context.Context, projectID string, src *uploadSource) (string, error) {
+	if src == nil || src.Path == "" {
+		return "", fmt.Errorf("source.upload.path is required")
+	}
+	dockerfile := src.DockerfilePath
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+	if !client.HasDockerfile(src.Path, dockerfile) {
+		return "", fmt.Errorf("no Dockerfile at %q in %s; write one or set dockerfilepath", dockerfile, src.Path)
+	}
+	return client.Upload(ctx, s.api, projectID, src.Path, nil)
 }
