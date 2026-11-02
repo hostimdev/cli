@@ -4,7 +4,7 @@ PREFIX   ?= /usr/local
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X github.com/hostimdev/cli/internal/cmd.version=$(VERSION)
 
-.PHONY: generate build install test lint fmt tidy clean
+.PHONY: hooks generate build install test lint fmt tidy clean
 
 # Regenerate the API client directly from the LIVE hosted spec — no vendored
 # spec file. Only api/client.gen.go is committed. CI re-runs this and fails on a
@@ -17,6 +17,10 @@ generate:
 		oapi-codegen -config api/oapi.cfg.yaml $$tmp && \
 		rm -f $$tmp && \
 		echo "wrote api/client.gen.go"
+
+# Use the versioned git hooks in .githooks/ (pre-push runs the generate check).
+hooks:
+	git config core.hooksPath .githooks
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(BIN) .

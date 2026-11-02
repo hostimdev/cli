@@ -1,0 +1,15 @@
+#!/bin/sh
+# Same check as .github/workflows/generate.yml, before the push instead of after:
+# regenerate the API client from the live spec and fail if it changed.
+# Release order: backend API change first, then `make generate` here, then the CLI.
+# Skip once with `git push --no-verify`.
+set -e
+cd "$(git rev-parse --show-toplevel)"
+# CI installs @latest; match it so the version header does not cause drift.
+go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+make -s generate >/dev/null
+if ! git diff --quiet api/client.gen.go; then
+	echo "pre-push: api/client.gen.go is out of date with api.hostim.dev." >&2
+	echo "The regenerated file is in the working tree: review, commit it, push again." >&2
+	exit 1
+fi
