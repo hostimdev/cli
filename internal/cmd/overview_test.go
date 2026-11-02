@@ -18,7 +18,8 @@ func TestSizeMB(t *testing.T) {
 		"zero":     {f32(0), "-"},
 		"exact gb": {f32(1024), "1GB"},
 		"25 gb":    {f32(25 * 1024), "25GB"},
-		"fraction": {f32(200), "0.2GB"},
+		"under gb": {f32(256), "256MB"},
+		"fraction": {f32(1536), "1.5GB"},
 	}
 	for name, c := range cases {
 		if got := sizeMB(c.in); got != c.want {
@@ -28,7 +29,7 @@ func TestSizeMB(t *testing.T) {
 }
 
 func TestDBInfo(t *testing.T) {
-	if got := dbInfo(sp("shared"), f32(200)); got != "shared, 0.2GB" {
+	if got := dbInfo(sp("shared"), f32(200)); got != "shared, 200MB" {
 		t.Errorf("shared+storage = %q", got)
 	}
 	if got := dbInfo(sp("dedicated"), nil); got != "dedicated" {

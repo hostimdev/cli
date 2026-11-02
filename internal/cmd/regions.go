@@ -227,10 +227,14 @@ func eur(p float32) string {
 	return "€" + strconv.FormatFloat(float64(p), 'f', 2, 32)
 }
 
-// storageGB renders a size in MB as GB, dropping a trailing ".0".
+// storageGB renders a size in MB as GB, dropping a trailing ".0". Sizes under
+// 1 GB stay in MB: 256MB, not a rounded 0.2GB.
 func storageGB(mb int) string {
 	if mb <= 0 {
 		return "-"
+	}
+	if mb < 1024 {
+		return strconv.Itoa(mb) + "MB"
 	}
 	if mb%1024 == 0 {
 		return strconv.Itoa(mb/1024) + "GB"

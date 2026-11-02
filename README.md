@@ -5,6 +5,11 @@ Create and manage projects, apps, databases (MySQL / Postgres / Redis), volumes
 and domains from a terminal or a CI pipeline, over the public REST API at
 `https://api.hostim.dev`.
 
+An app can deploy from a local directory (uploaded and built from its
+Dockerfile, or served as a static site), a git repository, or a Docker image.
+A local directory needs no git remote and no registry:
+`hostim deploy web --source . --plan sa-1-1 --port 8080`. See [deploy](#deploy).
+
 This file is the complete manual. The binary carries the same text: run
 `hostim agent` to print it to stdout, so an agent or a script can read the
 whole manual without network access.

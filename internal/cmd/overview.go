@@ -236,14 +236,10 @@ func dbInfo(typ *string, storageMB *float32) string {
 
 // sizeMB renders an optional size in MB as GB (or "-").
 func sizeMB(mb *float32) string {
-	if mb == nil || *mb <= 0 {
+	if mb == nil {
 		return "-"
 	}
-	gb := float64(*mb) / 1024
-	if gb == float64(int(gb)) {
-		return strconv.Itoa(int(gb)) + "GB"
-	}
-	return strconv.FormatFloat(gb, 'f', 1, 64) + "GB"
+	return storageGB(int(*mb))
 }
 
 func kindOrder(kind string) int {

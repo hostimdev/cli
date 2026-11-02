@@ -184,6 +184,9 @@ func templatesApplyCmd(c *cli) *cobra.Command {
 			"                       list like backend/templates.yml — with a list, use\n" +
 			"                       --id to pick the entry)\n" +
 			"  --compose <file>     a docker-compose file, converted to a template via the API\n\n" +
+			"To deploy code from a local directory (no git repo or image needed), use\n" +
+			"`hostim deploy <app> --source .`, or give an app in a template file\n" +
+			"`deploymentSource: {type: upload, upload: {path: .}}`. See `hostim agent`.\n\n" +
 			"The resources land in the resolved project (-p / current project) unless\n" +
 			"--new-project is given, which creates a fresh project first.\n\n" +
 			"Instead of deploying, pass --save <file> to write the resolved template to\n" +
