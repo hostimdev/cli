@@ -91,9 +91,10 @@ func newEnvCmd(c *cli) *cobra.Command {
 func envGetCmd(c *cli) *cobra.Command {
 	s := &envScope{}
 	cmd := &cobra.Command{
-		Use:   "get",
-		Short: "List environment variables",
-		Args:  cobra.NoArgs,
+		Use:     "get",
+		Aliases: []string{"ls", "list"},
+		Short:   "List environment variables",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := s.validate(); err != nil {
 				return err

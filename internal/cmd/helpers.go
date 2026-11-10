@@ -77,13 +77,14 @@ func confirmByName(cmd *cobra.Command, kind, name string, skip bool) error {
 }
 
 // confirmYesNo asks a yes/no question, defaulting to no. It is a no-op when skip
-// is true. In a non-interactive session it refuses unless skip is set.
+// is true. In a non-interactive session it refuses unless skip is set, and
+// names the question so the caller knows what --yes would approve.
 func confirmYesNo(cmd *cobra.Command, prompt string, skip bool) error {
 	if skip {
 		return nil
 	}
 	if !isInteractive(cmd) {
-		return fmt.Errorf("refusing to proceed in a non-interactive session; re-run with --yes to confirm")
+		return fmt.Errorf("%s\nNo terminal to answer on, so nothing was changed; re-run with --yes to confirm", prompt)
 	}
 	fmt.Fprintf(cmd.OutOrStderr(), "%s [y/N]: ", prompt)
 	line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
