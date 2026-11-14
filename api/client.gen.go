@@ -2022,6 +2022,13 @@ type ClientInterface interface {
 	// Corresponds with GET /api/regions/{regionName} (the `GetRegion` operationId).
 	GetRegion(ctx context.Context, regionName string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetRegionOutgoingIPs Get region outgoing IPs
+	//
+	// Get the public IP addresses that outgoing traffic from apps in this region comes from. Use them to allowlist Hostim in firewalls. The list changes when servers are added or replaced.
+	//
+	// Corresponds with GET /api/regions/{regionName}/outgoing-ips (the `GetRegionOutgoingIPs` operationId).
+	GetRegionOutgoingIPs(ctx context.Context, regionName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetRegionAppPricing Get region app pricing
 	//
 	// Get region pricing.
@@ -3530,6 +3537,23 @@ func (c *Client) GetRegions(ctx context.Context, reqEditors ...RequestEditorFn) 
 // Corresponds with GET /api/regions/{regionName} (the `GetRegion` operationId).
 func (c *Client) GetRegion(ctx context.Context, regionName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetRegionRequest(c.Server, regionName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRegionOutgoingIPs Get region outgoing IPs
+//
+// Get the public IP addresses that outgoing traffic from apps in this region comes from. Use them to allowlist Hostim in firewalls. The list changes when servers are added or replaced.
+//
+// Corresponds with GET /api/regions/{regionName}/outgoing-ips (the `GetRegionOutgoingIPs` operationId).
+func (c *Client) GetRegionOutgoingIPs(ctx context.Context, regionName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRegionOutgoingIPsRequest(c.Server, regionName)
 	if err != nil {
 		return nil, err
 	}
@@ -6835,6 +6859,40 @@ func NewGetRegionRequest(server string, regionName string) (*http.Request, error
 	return req, nil
 }
 
+// NewGetRegionOutgoingIPsRequest constructs an http.Request for the GetRegionOutgoingIPs method
+func NewGetRegionOutgoingIPsRequest(server string, regionName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "regionName", regionName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/regions/%s/outgoing-ips", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetRegionAppPricingRequest constructs an http.Request for the GetRegionAppPricing method
 func NewGetRegionAppPricingRequest(server string, regionName string) (*http.Request, error) {
 	var err error
@@ -7860,6 +7918,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/regions/{regionName} (the `GetRegion` operationId).
 	GetRegionWithResponse(ctx context.Context, regionName string, reqEditors ...RequestEditorFn) (*GetRegionResponse, error)
+
+	// GetRegionOutgoingIPsWithResponse Get region outgoing IPs
+	//
+	// Get the public IP addresses that outgoing traffic from apps in this region comes from. Use them to allowlist Hostim in firewalls. The list changes when servers are added or replaced.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/regions/{regionName}/outgoing-ips (the `GetRegionOutgoingIPs` operationId).
+	GetRegionOutgoingIPsWithResponse(ctx context.Context, regionName string, reqEditors ...RequestEditorFn) (*GetRegionOutgoingIPsResponse, error)
 
 	// GetRegionAppPricingWithResponse Get region app pricing
 	//
@@ -12392,6 +12459,54 @@ func (r GetRegionResponse) ContentType() string {
 	return ""
 }
 
+type GetRegionOutgoingIPsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]string
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GenericMessage
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRegionOutgoingIPsResponse) GetJSON200() *[]string {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetRegionOutgoingIPsResponse) GetJSON404() *GenericMessage {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRegionOutgoingIPsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRegionOutgoingIPsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRegionOutgoingIPsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRegionOutgoingIPsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetRegionAppPricingResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -14107,6 +14222,21 @@ func (c *ClientWithResponses) GetRegionWithResponse(ctx context.Context, regionN
 		return nil, err
 	}
 	return ParseGetRegionResponse(rsp)
+}
+
+// GetRegionOutgoingIPsWithResponse Get region outgoing IPs
+//
+// Get the public IP addresses that outgoing traffic from apps in this region comes from. Use them to allowlist Hostim in firewalls. The list changes when servers are added or replaced.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/regions/{regionName}/outgoing-ips (the `GetRegionOutgoingIPs` operationId).
+func (c *ClientWithResponses) GetRegionOutgoingIPsWithResponse(ctx context.Context, regionName string, reqEditors ...RequestEditorFn) (*GetRegionOutgoingIPsResponse, error) {
+	rsp, err := c.GetRegionOutgoingIPs(ctx, regionName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRegionOutgoingIPsResponse(rsp)
 }
 
 // GetRegionAppPricingWithResponse Get region app pricing
@@ -17652,6 +17782,39 @@ func ParseGetRegionResponse(rsp *http.Response) (*GetRegionResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetRegionOutgoingIPsResponse parses an HTTP response from a GetRegionOutgoingIPsWithResponse call
+func ParseGetRegionOutgoingIPsResponse(rsp *http.Response) (*GetRegionOutgoingIPsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRegionOutgoingIPsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []string
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GenericMessage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
